@@ -134,19 +134,26 @@ function readRows(container) {
 
 const rowHasContent = (rec, keys) => keys.some((k) => String(rec[k]).trim() !== '');
 
-/* Enter/Return jumps to the next empty field (wrapping), so phone users can
-   tab through the form from the keyboard's "next" key. */
+/* Enter/Return jumps to the next empty field; when none remain ahead, it
+   adds a fresh row to the table the cursor is in and moves into it. */
 function handleEnterKey(e) {
   if (e.key !== 'Enter') return;
   e.preventDefault();
   const inputs = [...document.querySelectorAll('main input[type="text"]')];
-  const i = inputs.indexOf(e.target);
-  const next = inputs
-    .slice(i + 1)
-    .concat(inputs.slice(0, i))
-    .find((el) => !el.value.trim());
-  if (next) next.focus();
-  else e.target.blur();
+  const next = inputs.slice(inputs.indexOf(e.target) + 1).find((el) => !el.value.trim());
+  if (next) {
+    next.focus();
+    return;
+  }
+  const container = e.target.closest('#stockRows, #cutRows');
+  if (!container) {
+    e.target.blur();
+    return;
+  }
+  const isStock = container.id === 'stockRows';
+  const row = addRow(container, isStock ? STOCK_COLS : CUT_COLS, isStock ? {} : { qty: '1' });
+  saveState();
+  row.querySelector('input').focus();
 }
 
 /* ---------------- persistence ---------------- */
