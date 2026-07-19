@@ -10,11 +10,8 @@ const cutRows = $('cutRows');
 
 /* ---------------- parsing & formatting ---------------- */
 
-// "48" | "0.75" | ".75" | "3/4" | "1 1/2" | "1-1/2" -> number; "" -> null; junk -> NaN
-function parseMeasure(raw) {
-  if (raw == null) return null;
-  const s = String(raw).trim();
-  if (!s) return null;
+// "48" | "0.75" | ".75" | "3/4" | "1 1/2" | "1-1/2" -> number; junk -> NaN
+function parseInches(s) {
   let m = s.match(/^(\d+(?:\.\d+)?|\.\d+)$/);
   if (m) return parseFloat(m[1]);
   m = s.match(/^(\d+)\s*\/\s*(\d+)$/);
@@ -22,6 +19,25 @@ function parseMeasure(raw) {
   m = s.match(/^(\d+)[\s-]+(\d+)\s*\/\s*(\d+)$/);
   if (m) return +m[3] ? +m[1] + (+m[2] / +m[3]) : NaN;
   return NaN;
+}
+
+const stripInchMark = (s) => s.replace(/\s*(?:"|″|in\.?|inch(?:es)?)$/, '').trim();
+
+// Inches, optionally with a feet part: 48 | 3/4 | 1 1/2 | 6" | 12' | 4'6" |
+// 4 ft 6 1/2 in  -> total inches; "" -> null; junk -> NaN
+function parseMeasure(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s) return null;
+  const ft = s.match(/^(\d+(?:\.\d+)?|\.\d+)\s*(?:'|′|ft\.?|feet|foot)\s*(.*)$/);
+  if (ft) {
+    const rest = stripInchMark(ft[2]);
+    if (!rest) return parseFloat(ft[1]) * 12;
+    const inches = parseInches(rest);
+    return Number.isNaN(inches) ? NaN : parseFloat(ft[1]) * 12 + inches;
+  }
+  const plain = stripInchMark(s);
+  return plain ? parseInches(plain) : NaN;
 }
 
 function parsePrice(raw) {
@@ -80,11 +96,13 @@ function addRow(container, cols, values = {}) {
     input.inputMode = col.mode;
     input.autocomplete = 'off';
     input.dataset.key = col.key;
+    input.enterKeyHint = 'next';
     input.value = values[col.key] ?? '';
     input.addEventListener('input', () => {
       input.classList.remove('invalid');
       saveState();
     });
+    input.addEventListener('keydown', handleEnterKey);
     cell.append(span, input);
     row.appendChild(cell);
   }
@@ -115,6 +133,21 @@ function readRows(container) {
 }
 
 const rowHasContent = (rec, keys) => keys.some((k) => String(rec[k]).trim() !== '');
+
+/* Enter/Return jumps to the next empty field (wrapping), so phone users can
+   tab through the form from the keyboard's "next" key. */
+function handleEnterKey(e) {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const inputs = [...document.querySelectorAll('main input[type="text"]')];
+  const i = inputs.indexOf(e.target);
+  const next = inputs
+    .slice(i + 1)
+    .concat(inputs.slice(0, i))
+    .find((el) => !el.value.trim());
+  if (next) next.focus();
+  else e.target.blur();
+}
 
 /* ---------------- persistence ---------------- */
 
@@ -344,7 +377,7 @@ function solve(stock, cuts, kerf, allowLarger) {
 
 /* ---------------- rendering ---------------- */
 
-function renderResults(bins, kerf) {
+function renderResults(bins, kerf, pricedMode) {
   const results = $('results');
   results.hidden = false;
 
@@ -355,19 +388,20 @@ function renderResults(bins, kerf) {
   const totalLeftover = bins.reduce((s, b) => s + (b.stock.length - b.used), 0);
   const totalPieces = bins.reduce((s, b) => s + b.cuts.length, 0);
 
-  $('stats').innerHTML = [
-    ['Total cost', money(totalCost)],
+  const stats = pricedMode ? [['Total cost', money(totalCost)]] : [];
+  stats.push(
     ['Boards to buy', String(bins.length)],
     ['Pieces cut', String(totalPieces)],
     ['Utilization', `${Math.round((totalCutLen / totalStockLen) * 100)}%`],
-    ['Leftover', `${fmt(totalLeftover)}″`],
-  ]
+    ['Leftover', `${fmt(totalLeftover)}″`]
+  );
+  $('stats').innerHTML = stats
     .map(([k, v]) => `<div class="stat"><span class="v">${v}</span><span class="k">${k}</span></div>`)
     .join('');
 
   const warn = $('warnBox');
-  warn.hidden = !unpriced;
-  if (unpriced) {
+  warn.hidden = !(pricedMode && unpriced);
+  if (pricedMode && unpriced) {
     warn.textContent = `${unpriced} board${unpriced > 1 ? 's have' : ' has'} no price entered — the total treats ${unpriced > 1 ? 'them' : 'it'} as $0.`;
   }
 
@@ -380,14 +414,16 @@ function renderResults(bins, kerf) {
   }
   const rows = [...byType.values()]
     .map(({ type, qty }) => {
+      if (!pricedMode) return `<tr><td>${describeDims(type)}</td><td>${qty}</td></tr>`;
       const price = type.price != null ? money(type.price) : '—';
       const line = type.price != null ? money(type.price * qty) : '—';
       return `<tr><td>${describeDims(type)}</td><td>${qty}</td><td>${price}</td><td>${line}</td></tr>`;
     })
     .join('');
-  $('shoppingList').innerHTML =
-    `<table class="shop-table"><thead><tr><th>Board</th><th>Qty</th><th>Each</th><th>Total</th></tr></thead>` +
-    `<tbody>${rows}</tbody><tfoot><tr><td>Total</td><td></td><td></td><td>${money(totalCost)}</td></tr></tfoot></table>`;
+  $('shoppingList').innerHTML = pricedMode
+    ? `<table class="shop-table"><thead><tr><th>Board</th><th>Qty</th><th>Each</th><th>Total</th></tr></thead>` +
+      `<tbody>${rows}</tbody><tfoot><tr><td>Total</td><td></td><td></td><td>${money(totalCost)}</td></tr></tfoot></table>`
+    : `<table class="shop-table"><thead><tr><th>Board</th><th>Qty</th></tr></thead><tbody>${rows}</tbody></table>`;
 
   // cut plan: group identical board layouts
   const layouts = new Map();
@@ -451,7 +487,9 @@ function calculate() {
     return;
   }
   errorBox.hidden = true;
-  renderResults(res.bins, kerf);
+  // with no prices anywhere, the solver's $0 tie-breakers already minimize
+  // board count, then total material — just hide the money UI
+  renderResults(res.bins, kerf, stock.some((s) => s.price != null));
   $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -459,6 +497,7 @@ $('calcBtn').addEventListener('click', calculate);
 $('addStock').addEventListener('click', () => { addRow(stockRows, STOCK_COLS); saveState(); });
 $('addCut').addEventListener('click', () => { addRow(cutRows, CUT_COLS, { qty: '1' }); saveState(); });
 $('kerfInput').addEventListener('input', () => { $('kerfInput').classList.remove('invalid'); saveState(); });
+$('kerfInput').addEventListener('keydown', handleEnterKey);
 $('allowLarger').addEventListener('change', saveState);
 
 $('clearAll').addEventListener('click', () => {
