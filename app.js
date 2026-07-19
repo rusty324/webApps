@@ -420,6 +420,7 @@ function renderResults(bins, kerf, pricedMode) {
     byType.set(b.stock, entry);
   }
   const rows = [...byType.values()]
+    .sort((a, b) => b.type.length - a.type.length) // longest board first
     .map(({ type, qty }) => {
       if (!pricedMode) return `<tr><td>${describeDims(type)}</td><td>${qty}</td></tr>`;
       const price = type.price != null ? money(type.price) : '—';
@@ -445,6 +446,7 @@ function renderResults(bins, kerf, pricedMode) {
   }
 
   $('cutPlan').innerHTML = [...layouts.values()]
+    .sort((a, b) => b.bin.stock.length - a.bin.stock.length || b.bin.used - a.bin.used)
     .map(({ bin, count }, i) => {
       const segs = [];
       bin.cuts.forEach((c, ci) => {
