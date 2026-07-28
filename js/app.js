@@ -1,4 +1,5 @@
 import { TABS, DEFAULT_TAB, REPO, SYNC_WORKFLOW_FILE } from './config.js';
+import { getUnits, setUnits } from './units.js';
 import * as store from './storage/store.js';
 import { getToken, setToken, hasToken } from './storage/github-api.js';
 import { initTabbar } from './ui/tabbar.js';
@@ -30,7 +31,27 @@ function openSettings() {
     placeholder: hasToken() ? '••••••••  (token saved)' : 'github_pat_…',
     autocomplete: 'off',
   });
+  // Units apply immediately on change; stored data stays metric, only the
+  // display converts, so this is always safe to flip back and forth.
+  const units = getUnits();
+  const unitSelect = (key, options) => el('select', {
+    onchange: (e) => {
+      setUnits({ [key]: e.target.value });
+      tabbar.refresh();
+    },
+  }, options.map(([v, label]) => el('option', { value: v, selected: units[key] === v }, label)));
+
   const body = el('div', {},
+    el('h3', {}, 'Units'),
+    el('div', { class: 'field-row' },
+      el('div', { class: 'field' }, el('label', {}, 'Weight'),
+        unitSelect('weight', [['kg', 'kilograms (kg)'], ['lb', 'pounds (lb)']])),
+      el('div', { class: 'field' }, el('label', {}, 'Distance'),
+        unitSelect('distance', [['km', 'kilometers (km)'], ['mi', 'miles (mi)']])),
+      el('div', { class: 'field' }, el('label', {}, 'Body'),
+        unitSelect('length', [['cm', 'centimeters (cm)'], ['in', 'inches (in)']])),
+    ),
+    el('h3', {}, 'GitHub sync'),
     el('p', { class: 'muted' },
       `Data is saved to ${REPO.owner}/${REPO.repo} (branch ${REPO.branch}) via the GitHub API. `,
       'Paste a fine-grained personal access token scoped to only that repo, with ',

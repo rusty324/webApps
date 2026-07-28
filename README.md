@@ -50,6 +50,12 @@ Open the app, tap ⚙ Settings, paste the token. It's stored only in that
 browser's localStorage and only sent to `api.github.com`. Without a token the
 app still works in local-only mode (data stays in the browser).
 
+⚙ Settings also has **unit preferences** — weight (kg/lb), distance (km/mi,
+which also flips pace between min/km and min/mi), and body measurements
+(cm/in). Units are a per-browser display setting: stored JSON, Strava data,
+and exported plan templates are always metric (kg / meters / cm), converted
+at the UI only, so switching units never rewrites data.
+
 ### 3. Strava sync (optional, one-time)
 
 1. Create an API application at <https://www.strava.com/settings/api>

@@ -6,9 +6,13 @@ import { makeLogEntry, makeBodyMetric, makeMatch } from '../models.js';
 import { findSuggestions, findCandidates } from '../matcher.js';
 import { STRAVA_TYPE_MAP, BODY_METRICS } from '../config.js';
 import {
-  todayStr, addDays, diffDays, formatDate, formatDateLong,
-  formatDuration, formatPace, formatKm,
+  todayStr, addDays, diffDays, formatDate, formatDateLong, formatDuration,
 } from '../dates.js';
+import {
+  formatWeight, formatDistance, formatPace, paceChartValue, paceUnit,
+  weightUnit, weightToInput, weightFromInput,
+  distanceUnit, distanceToInput, distanceFromInput, resolveMetric,
+} from '../units.js';
 import { lineChart, datePoints } from '../charts.js';
 import { el, openModal, confirmDialog, toast, emptyState } from './components.js';
 import { pickExercise, targetSummary } from './plans-tab.js';
@@ -95,9 +99,9 @@ export function actualSummary(actual) {
   if (!actual) return '';
   const parts = [];
   if (actual.sets != null && actual.reps != null) {
-    parts.push(`${actual.sets} × ${actual.reps}${actual.weight ? ` @ ${actual.weight} kg` : ''}`);
+    parts.push(`${actual.sets} × ${actual.reps}${actual.weight ? ` @ ${formatWeight(actual.weight)}` : ''}`);
   }
-  if (actual.distanceM) parts.push(formatKm(actual.distanceM));
+  if (actual.distanceM) parts.push(formatDistance(actual.distanceM));
   if (actual.movingSec) parts.push(formatDuration(actual.movingSec));
   if (actual.distanceM && actual.movingSec) parts.push(formatPace(actual.distanceM, actual.movingSec));
   if (actual.durationSec) parts.push(formatDuration(actual.durationSec));
@@ -152,8 +156,8 @@ function weighInCard(today) {
     return el('div', { class: 'card' },
       el('div', { class: 'list-row', style: 'border:none;padding:0' },
         el('div', { class: 'row-main' },
-          el('div', { class: 'row-title' }, `${todays.weight} kg `, el('span', { class: 'pill ok' }, 'weighed in')),
-          metricSummary(todays) !== `${todays.weight} kg` && el('div', { class: 'row-sub' }, metricSummary(todays)),
+          el('div', { class: 'row-title' }, `${formatWeight(todays.weight)} `, el('span', { class: 'pill ok' }, 'weighed in')),
+          metricSummary(todays) !== formatWeight(todays.weight) && el('div', { class: 'row-sub' }, metricSummary(todays)),
         ),
         el('button', { class: 'btn small secondary', onclick: () => logBodyMetric(todays) }, 'Edit'),
       ),
@@ -163,12 +167,13 @@ function weighInCard(today) {
   const last = [...metrics].filter((m) => m.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
   const input = el('input', {
     type: 'number', inputmode: 'decimal', step: 0.1,
-    value: last?.weight ?? '', placeholder: 'kg', 'aria-label': 'Weight (kg)',
+    value: weightToInput(last?.weight) ?? '', placeholder: weightUnit(), 'aria-label': `Weight (${weightUnit()})`,
   });
   const save = () => {
     const w = parseFloat(input.value);
     if (isNaN(w)) { toast('Enter a weight', 'error'); return; }
-    const entry = todays ? { ...todays, weight: w } : makeBodyMetric({ date: today, weight: w });
+    const kg = weightFromInput(w);
+    const entry = todays ? { ...todays, weight: kg } : makeBodyMetric({ date: today, weight: kg });
     store.upsert('metrics', entry);
     toast('Weight logged');
   };
@@ -230,11 +235,11 @@ function logEntryModal({ existing = null, plan = null, session = null, pe = null
     fields.append(
       field('Sets', num('sets', a.sets ?? t.sets)),
       field('Reps', num('reps', a.reps ?? t.reps)),
-      field('Weight (kg)', num('weight', a.weight ?? t.weight, 0.5)),
+      field(`Weight (${weightUnit()})`, num('weight', weightToInput(a.weight ?? t.weight) ?? '', 0.5)),
     );
   } else if (kind === 'distance') {
     fields.append(
-      field('Distance (km)', num('km', a.distanceM ? a.distanceM / 1000 : (t.distanceM ? t.distanceM / 1000 : ''), 0.01)),
+      field(`Distance (${distanceUnit()})`, num('km', distanceToInput(a.distanceM ?? t.distanceM) ?? '', 0.01)),
       field('Time (min)', num('min', a.movingSec ? +(a.movingSec / 60).toFixed(1) : '', 0.5)),
     );
   } else {
@@ -267,9 +272,9 @@ function logEntryModal({ existing = null, plan = null, session = null, pe = null
         if (kind === 'reps') {
           actual.sets = val('sets');
           actual.reps = val('reps');
-          if (val('weight') != null) actual.weight = val('weight');
+          if (val('weight') != null) actual.weight = weightFromInput(val('weight'));
         } else if (kind === 'distance') {
-          if (val('km') != null) actual.distanceM = Math.round(val('km') * 1000);
+          if (val('km') != null) actual.distanceM = distanceFromInput(val('km'));
           if (val('min') != null) actual.movingSec = Math.round(val('min') * 60);
         } else if (val('min') != null) {
           actual.durationSec = Math.round(val('min') * 60);
@@ -500,17 +505,18 @@ function renderMetrics() {
     el('button', { class: 'btn small', onclick: () => logBodyMetric() }, '+ Log metrics'),
   ));
   for (const m of BODY_METRICS) {
+    const res = resolveMetric(m);
     const points = datePoints(
       metrics.filter((r) => r[m.id] != null),
-      (r) => r[m.id],
-      (r) => `${r.date}: ${r[m.id]} ${m.unit}`,
+      (r) => res.toInput(r[m.id]),
+      (r) => `${r.date}: ${res.toInput(r[m.id])} ${res.unit}`,
     );
     if (m.id !== 'weight' && points.length < 2) continue;
     if (m.id !== 'weight') root.appendChild(el('h3', {}, m.label));
     root.appendChild(lineChart({
       points,
-      yLabel: m.unit,
-      yFormat: (v) => (m.step >= 1 ? String(Math.round(v)) : v.toFixed(1)),
+      yLabel: res.unit,
+      yFormat: (v) => (res.step >= 1 ? String(Math.round(v)) : v.toFixed(1)),
     }));
   }
 
@@ -519,16 +525,18 @@ function renderMetrics() {
   root.appendChild(el('h3', {}, 'Running pace'));
   root.appendChild(lineChart({
     points: datePoints(runs.filter((r) => r.distanceM && r.movingSec),
-      (r) => r.movingSec / (r.distanceM / 1000) / 60,
-      (r) => `${r.date}: ${formatPace(r.distanceM, r.movingSec)} · ${formatKm(r.distanceM)}`),
-    yLabel: 'min/km (lower = faster)',
+      (r) => paceChartValue(r.distanceM, r.movingSec),
+      (r) => `${r.date}: ${formatPace(r.distanceM, r.movingSec)} · ${formatDistance(r.distanceM)}`),
+    yLabel: `min${paceUnit()} (lower = faster)`,
     yFormat: (v) => v.toFixed(1),
     invertY: true,
   }));
   root.appendChild(el('h3', {}, 'Running distance'));
   root.appendChild(lineChart({
-    points: datePoints(runs.filter((r) => r.distanceM), (r) => r.distanceM / 1000, (r) => `${r.date}: ${formatKm(r.distanceM)}`),
-    yLabel: 'km',
+    points: datePoints(runs.filter((r) => r.distanceM),
+      (r) => distanceToInput(r.distanceM),
+      (r) => `${r.date}: ${formatDistance(r.distanceM)}`),
+    yLabel: distanceUnit(),
     yFormat: (v) => v.toFixed(1),
   }));
 
@@ -592,10 +600,13 @@ function adherence(days) {
 function logBodyMetric(existing = null) {
   const entry = existing ? { ...existing } : makeBodyMetric();
   const dateIn = el('input', { type: 'date', value: entry.date });
-  const inputs = new Map(BODY_METRICS.map((m) => [
-    m.id,
-    el('input', { type: 'number', inputmode: 'decimal', step: m.step, value: entry[m.id] ?? '' }),
-  ]));
+  const inputs = new Map(BODY_METRICS.map((m) => {
+    const res = resolveMetric(m);
+    return [m.id, el('input', {
+      type: 'number', inputmode: 'decimal', step: res.step,
+      value: res.toInput(entry[m.id]) ?? '',
+    })];
+  }));
   const notesIn = el('input', { value: entry.notes ?? '', placeholder: 'optional' });
   const actions = [
     { label: 'Cancel', class: 'btn secondary', onClick: () => {} },
@@ -606,7 +617,7 @@ function logBodyMetric(existing = null) {
         const values = {};
         for (const m of BODY_METRICS) {
           const v = parseFloat(inputs.get(m.id).value);
-          values[m.id] = isNaN(v) ? null : v;
+          values[m.id] = isNaN(v) ? null : resolveMetric(m).fromInput(v);
         }
         if (Object.values(values).every((v) => v == null)) {
           toast('Enter at least one measurement', 'error');
@@ -627,7 +638,7 @@ function logBodyMetric(existing = null) {
     });
   }
   const metricFields = BODY_METRICS.map((m) =>
-    el('div', { class: 'field' }, el('label', {}, `${m.label} (${m.unit})`), inputs.get(m.id)));
+    el('div', { class: 'field' }, el('label', {}, `${m.label} (${resolveMetric(m).unit})`), inputs.get(m.id)));
   openModal('Body metrics', el('div', {},
     el('div', { class: 'field' }, el('label', {}, 'Date'), dateIn),
     el('div', { class: 'field-row' }, metricFields.slice(0, 2)),
@@ -636,11 +647,15 @@ function logBodyMetric(existing = null) {
   ), actions);
 }
 
-// Summary like "82.0 kg · 15.2 % · 48 bpm" for the entries list.
+// Summary like "82.0 kg · 15.2 % · 48 bpm" for the entries list,
+// in the user's display units.
 function metricSummary(entry) {
   return BODY_METRICS
     .filter((m) => entry[m.id] != null)
-    .map((m) => `${entry[m.id]} ${m.unit}`)
+    .map((m) => {
+      const res = resolveMetric(m);
+      return `${res.toInput(entry[m.id])} ${res.unit}`;
+    })
     .join(' · ');
 }
 

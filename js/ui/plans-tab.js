@@ -5,6 +5,11 @@ import * as store from '../storage/store.js';
 import { makePlan, makeSession, makePlannedExercise, makeExercise } from '../models.js';
 import { CATEGORIES, TARGET_KINDS } from '../config.js';
 import { todayStr, addDays, toDateStr, parseDateStr, formatDate } from '../dates.js';
+import {
+  formatWeight, formatDistance, formatPaceValue, paceUnit,
+  weightUnit, weightToInput, weightFromInput,
+  distanceUnit, distanceToInput, distanceFromInput, paceToInput, paceFromInput,
+} from '../units.js';
 import { el, openModal, confirmDialog, toast, emptyState } from './components.js';
 
 let root = null;
@@ -290,14 +295,12 @@ function defaultTarget(ex) {
 export function targetSummary(target) {
   if (!target?.kind) return 'no target';
   if (target.kind === 'reps') {
-    return `${target.sets ?? '?'} × ${target.reps ?? '?'}${target.weight ? ` @ ${target.weight} kg` : ''}`;
+    return `${target.sets ?? '?'} × ${target.reps ?? '?'}${target.weight ? ` @ ${formatWeight(target.weight)}` : ''}`;
   }
   if (target.kind === 'distance') {
-    const km = target.distanceM ? `${(target.distanceM / 1000).toFixed(1)} km` : '';
-    const pace = target.paceSecPerKm
-      ? ` @ ${Math.floor(target.paceSecPerKm / 60)}:${String(target.paceSecPerKm % 60).padStart(2, '0')}/km`
-      : '';
-    return km + pace || 'distance';
+    const dist = target.distanceM ? formatDistance(target.distanceM) : '';
+    const pace = target.paceSecPerKm ? ` @ ${formatPaceValue(target.paceSecPerKm)}` : '';
+    return dist + pace || 'distance';
   }
   if (target.kind === 'duration') {
     return target.durationSec ? `${Math.round(target.durationSec / 60)} min` : 'duration';
@@ -321,14 +324,14 @@ function editTarget(pe, ex, done) {
         el('div', { class: 'field-row' },
           field('Sets', num('sets', t.sets ?? 3)),
           field('Reps', num('reps', t.reps ?? 10)),
-          field('Weight (kg)', num('weight', t.weight ?? '', 0.5)),
+          field(`Weight (${weightUnit()})`, num('weight', weightToInput(t.weight) ?? '', 0.5)),
         ),
       );
     } else if (kind === 'distance') {
       fields.append(
         el('div', { class: 'field-row' },
-          field('Distance (km)', num('km', t.distanceM ? t.distanceM / 1000 : 5, 0.1)),
-          field('Pace (min/km)', num('pace', t.paceSecPerKm ? +(t.paceSecPerKm / 60).toFixed(2) : '', 0.05)),
+          field(`Distance (${distanceUnit()})`, num('km', distanceToInput(t.distanceM ?? 5000), 0.1)),
+          field(`Pace (min${paceUnit()})`, num('pace', paceToInput(t.paceSecPerKm) ?? '', 0.05)),
         ),
       );
     } else {
@@ -358,10 +361,10 @@ function editTarget(pe, ex, done) {
         const kind = kindSel.value;
         if (kind === 'reps') {
           pe.target = { kind, sets: val('sets'), reps: val('reps') };
-          if (val('weight') != null) pe.target.weight = val('weight');
+          if (val('weight') != null) pe.target.weight = weightFromInput(val('weight'));
         } else if (kind === 'distance') {
-          pe.target = { kind, distanceM: val('km') != null ? Math.round(val('km') * 1000) : null };
-          if (val('pace') != null) pe.target.paceSecPerKm = Math.round(val('pace') * 60);
+          pe.target = { kind, distanceM: distanceFromInput(val('km')) };
+          if (val('pace') != null) pe.target.paceSecPerKm = paceFromInput(val('pace'));
         } else {
           pe.target = { kind, durationSec: val('min') != null ? Math.round(val('min') * 60) : null };
         }

@@ -65,9 +65,11 @@ export const SYNC_WORKFLOW_FILE = 'strava-sync.yml';
 
 // Body metrics the Metrics view can record. Adding a metric here is all
 // that's needed — the entry modal, charts, and history list derive from it.
+// unit/step are the metric (canonical) defaults; entries with a `dimension`
+// are shown in the user's preferred unit via units.js resolveMetric().
 export const BODY_METRICS = [
-  { id: 'weight', label: 'Weight', unit: 'kg', step: 0.1 },
-  { id: 'bodyFat', label: 'Body fat', unit: '%', step: 0.1 },
-  { id: 'restingHr', label: 'Resting HR', unit: 'bpm', step: 1 },
-  { id: 'waist', label: 'Waist', unit: 'cm', step: 0.5 },
+  { id: 'weight', label: 'Weight', unit: 'kg', step: 0.1, dimension: 'weight' },
+  { id: 'bodyFat', label: 'Body fat', unit: '%', step: 0.1, dimension: null },
+  { id: 'restingHr', label: 'Resting HR', unit: 'bpm', step: 1, dimension: null },
+  { id: 'waist', label: 'Waist', unit: 'cm', step: 0.5, dimension: 'length' },
 ];

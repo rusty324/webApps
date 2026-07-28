@@ -51,16 +51,5 @@ export function formatDuration(seconds) {
   return `${s}s`;
 }
 
-// Pace as min/km from meters + seconds.
-export function formatPace(meters, seconds) {
-  if (!meters || !seconds) return '';
-  const secPerKm = seconds / (meters / 1000);
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
-  return `${m}:${String(s).padStart(2, '0')}/km`;
-}
-
-export function formatKm(meters) {
-  if (meters == null) return '';
-  return `${(meters / 1000).toFixed(meters >= 100000 ? 0 : 2)} km`;
-}
+// Distance and pace formatting live in units.js — they depend on the
+// user's unit preference; only unit-agnostic helpers belong here.
