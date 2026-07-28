@@ -2,7 +2,7 @@
 // match suggestions), Metrics (weight/pace charts + adherence), Heatmap.
 
 import * as store from '../storage/store.js';
-import { makeLogEntry, makeBodyMetric, makeMatch } from '../models.js';
+import { makeLogEntry, makeBodyMetric, makeMatch, allSessions, sessionItems } from '../models.js';
 import { findSuggestions, findCandidates } from '../matcher.js';
 import { STRAVA_TYPE_MAP, BODY_METRICS } from '../config.js';
 import {
@@ -137,17 +137,27 @@ function renderToday() {
 
   let anyPlanned = false;
   for (const plan of activePlans()) {
-    for (const session of plan.sessions) {
-      if (addDays(plan.startDate, session.dayOffset) !== today) continue;
+    for (const { session, week, dayOffset } of allSessions(plan)) {
+      if (addDays(plan.startDate, dayOffset) !== today) continue;
       anyPlanned = true;
       const card = el('div', { class: 'card' },
         el('div', { class: 'row-title' }, session.label || plan.name),
-        el('div', { class: 'row-sub' }, plan.name),
+        el('div', { class: 'row-sub' },
+          `${plan.name} · week ${week.index}${week.isDeload ? ' (deload)' : ''}`
+          + `${session.estimatedDurationMin ? ` · ~${session.estimatedDurationMin} min` : ''}`),
+        session.note && el('div', { class: 'row-sub' }, session.note),
       );
-      for (const pe of [...session.plannedExercises].sort((a, b) => a.order - b.order)) {
-        card.appendChild(plannedRow(plan, session, pe, lib.get(pe.exerciseId), loggedByPe.get(pe.id)));
+      for (const block of session.blocks ?? []) {
+        if ((session.blocks?.length ?? 0) > 1 || block.name || block.rounds) {
+          card.appendChild(el('div', { class: 'row-sub', style: 'margin-top:8px;font-weight:600' },
+            (block.name || blockLabel(block.type)) + (block.rounds ? ` — ${block.rounds} rounds` : '')));
+          if (block.note) card.appendChild(el('div', { class: 'row-sub' }, block.note));
+        }
+        for (const item of block.items ?? []) {
+          card.appendChild(plannedRow(plan, session, item, lib.get(item.exerciseId), loggedByPe.get(item.id)));
+        }
       }
-      if (!session.plannedExercises.length) card.appendChild(el('p', { class: 'muted' }, 'Session has no exercises.'));
+      if (!sessionItems(session).length) card.appendChild(el('p', { class: 'muted' }, 'Session has no exercises.'));
       root.appendChild(card);
     }
   }
@@ -200,11 +210,17 @@ function weighInCard(today) {
   );
 }
 
+function blockLabel(type) {
+  return { warmup: 'Warm-up', main: 'Main', strength: 'Strength', accessory: 'Accessory', cooldown: 'Cool-down' }[type] ?? 'Block';
+}
+
 function plannedRow(plan, session, pe, ex, existing) {
   const row = el('div', { class: 'list-row' });
   const main = el('div', { class: 'row-main' },
-    el('div', { class: 'row-title' }, ex?.name ?? '?'),
+    el('div', { class: 'row-title' }, ex?.name ?? '?',
+      pe.optional ? el('span', { class: 'pill', style: 'margin-left:6px' }, 'optional') : ''),
     el('div', { class: 'row-sub' }, `Target: ${targetSummary(pe.target)}`),
+    pe.note && el('div', { class: 'row-sub' }, pe.note),
   );
   if (existing) {
     main.appendChild(el('div', { class: 'row-sub' },
@@ -237,7 +253,10 @@ function logEntryModal({ existing = null, plan = null, session = null, pe = null
         exerciseId: ex?.id ?? null,
       });
 
-  const kind = pe?.target?.kind ?? (ex?.defaultUnit === 'distance' ? 'distance' : ex?.defaultUnit === 'duration' ? 'duration' : 'reps');
+  // Intervals are logged as a completed duration (total time), which keeps
+  // the entry comparable with duration work.
+  let kind = pe?.target?.kind ?? (['distance', 'duration'].includes(ex?.measurementType) ? ex.measurementType : 'reps');
+  if (kind === 'intervals') kind = 'duration';
   const a = entry.actual ?? {};
   const t = pe?.target ?? {};
   const dateInput = el('input', { type: 'date', value: entry.date });
@@ -258,7 +277,8 @@ function logEntryModal({ existing = null, plan = null, session = null, pe = null
       field('Time (min)', num('min', a.movingSec ? +(a.movingSec / 60).toFixed(1) : '', 0.5)),
     );
   } else {
-    fields.append(field('Duration (min)', num('min', a.durationSec ? a.durationSec / 60 : (t.durationSec ? t.durationSec / 60 : ''), 1)));
+    const prefillSec = a.durationSec ?? t.durationSec ?? t.totalSec;
+    fields.append(field('Duration (min)', num('min', prefillSec ? +(prefillSec / 60).toFixed(1) : '', 1)));
   }
 
   const rpeInput = num('rpe', entry.rpe, 1);
@@ -437,9 +457,9 @@ function stravaRow(entry, lib, planById) {
 function describeMatch(match, planById, lib) {
   const plan = planById.get(match.planId);
   if (!plan) return 'a deleted plan';
-  const session = plan.sessions.find((s) => s.id === match.sessionId);
-  const pe = session?.plannedExercises.find((p) => p.id === match.plannedExerciseId);
-  const ex = pe && lib.get(pe.exerciseId);
+  const session = allSessions(plan).map((s) => s.session).find((s) => s.id === match.sessionId);
+  const item = session && sessionItems(session).map((x) => x.item).find((i) => i.id === match.plannedExerciseId);
+  const ex = item && lib.get(item.exerciseId);
   return [plan.name, session?.label, ex?.name].filter(Boolean).join(' · ') || plan.name;
 }
 
@@ -455,7 +475,6 @@ function decideMatch(entry, status) {
 // Manual picker for ambiguous/unmatched entries: shows nearby candidates.
 function manualLink(entry) {
   const lib = exById();
-  const planById = new Map(store.get('plans').map((p) => [p.id, p]));
   const candidates = findCandidates(entry, activePlans(), lib, 7); // wide window for manual review
   const list = el('div', {});
   let modal;
@@ -575,12 +594,12 @@ function renderMetrics() {
 function runningActivities() {
   const out = [];
   for (const e of store.getStravaEntries()) {
-    if ((STRAVA_TYPE_MAP[e.type] ?? 'other') === 'running') out.push(e);
+    if (STRAVA_TYPE_MAP[e.type]?.modality === 'run') out.push(e);
   }
   const lib = exById();
   for (const l of store.get('logs')) {
     const ex = lib.get(l.exerciseId);
-    if (ex?.category === 'running' && l.actual?.distanceM) {
+    if (ex?.modality === 'run' && l.actual?.distanceM) {
       out.push({ date: l.date, distanceM: l.actual.distanceM, movingSec: l.actual.movingSec });
     }
   }
@@ -603,12 +622,13 @@ function adherence(days) {
   let planned = 0;
   let done = 0;
   for (const plan of activePlans()) {
-    for (const session of plan.sessions) {
-      const d = addDays(plan.startDate, session.dayOffset);
+    for (const { session, dayOffset } of allSessions(plan)) {
+      const d = addDays(plan.startDate, dayOffset);
       if (d < from || d > to) continue;
-      for (const pe of session.plannedExercises) {
+      for (const { item } of sessionItems(session)) {
+        if (item.optional) continue; // skipping optional work isn't non-adherence
         planned++;
-        if (loggedPe.has(pe.id) || confirmedPe.has(pe.id)) done++;
+        if (loggedPe.has(item.id) || confirmedPe.has(item.id)) done++;
       }
     }
   }

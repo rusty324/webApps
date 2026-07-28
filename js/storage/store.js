@@ -12,6 +12,7 @@
 import * as cache from './cache.js';
 import { makeClient, hasToken, ConflictError, NotFoundError, AuthError } from './github-api.js';
 import { encryptJson, decryptJson, isEnvelope } from '../crypto.js';
+import { migratePlan, migrateExercise } from '../models.js';
 import { DATA_FILES, STRAVA_DIR, REPO } from '../config.js';
 
 const client = makeClient(REPO);
@@ -42,7 +43,8 @@ export function encryption() {
 }
 
 function isEncryptedPath(path) {
-  return path === DATA_FILES.logs || path === DATA_FILES.metrics || path.startsWith(`${STRAVA_DIR}/activities-`);
+  return path === DATA_FILES.logs || path === DATA_FILES.metrics || path === DATA_FILES.goals
+    || path.startsWith(`${STRAVA_DIR}/activities-`);
 }
 
 // Repo-file (de)serialization boundary — the ONLY place ciphertext exists.
@@ -92,7 +94,12 @@ export function syncStatus() {
 // ---------- reads ----------
 
 export function get(collection) {
-  return cache.getData(DATA_FILES[collection]) ?? [];
+  const data = cache.getData(DATA_FILES[collection]) ?? [];
+  // Records written by the app's first version are upgraded transparently;
+  // the migrated shape is persisted whenever the user next saves.
+  if (collection === 'plans') return data.map(migratePlan);
+  if (collection === 'exercises') return data.map(migrateExercise);
+  return data;
 }
 
 // All Strava entries across cached month shards, newest first.
@@ -249,7 +256,7 @@ export async function refreshStrava() {
 // the documented exception (the sync script's id-dedupe makes races benign).
 export async function rewriteEncryptedFiles() {
   if (!hasToken()) return; // local mode: nothing in the repo to rewrite
-  for (const collection of ['logs', 'metrics']) {
+  for (const collection of ['logs', 'metrics', 'goals']) {
     const path = DATA_FILES[collection];
     cache.markDirty(path);
     await push(path, collection);

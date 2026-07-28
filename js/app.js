@@ -5,27 +5,74 @@ import { getToken, setToken, hasToken } from './storage/github-api.js';
 import { initTabbar } from './ui/tabbar.js';
 import { el, openModal, toast, downloadJson } from './ui/components.js';
 
-// Starter template for the Plans tab's Import — shows every target kind so
-// it can be edited in any text editor and imported as-is.
+// Starter template for the Plans tab's Import, in the fitness-tracker-plan
+// v2 schema — shows the exerciseLibrary map, blocks, and every target kind
+// so it can be edited in any text editor and imported as-is.
 const EXAMPLE_TEMPLATE = {
   format: 'fitness-tracker-plan',
-  version: 1,
-  name: 'Example Plan (edit me)',
-  type: 'custom',
-  sessions: [
-    {
-      label: 'Day 1 · Strength',
-      dayOffset: 0,
-      exercises: [
-        { name: 'Back Squat', category: 'strength', defaultUnit: 'reps', target: { kind: 'reps', sets: 3, reps: 8, weight: 60 } },
-        { name: 'Plank', category: 'strength', defaultUnit: 'duration', target: { kind: 'duration', durationSec: 120 } },
+  formatVersion: 2,
+  plan: {
+    id: 'example_plan',
+    name: 'Example Plan (edit me)',
+    description: 'A starter template demonstrating the plan format.',
+    goal: 'Show every target kind',
+    level: 'beginner',
+    durationWeeks: 1,
+    sessionsPerWeek: 2,
+  },
+  exerciseLibrary: {
+    back_squat: {
+      name: 'Back Squat', category: 'strength', modality: 'barbell', measurementType: 'reps',
+      description: 'Barbell on upper back, squat to parallel and stand back up.',
+      cues: ['Brace before descending', 'Knees track over toes'],
+    },
+    plank: {
+      name: 'Plank', category: 'strength', modality: 'bodyweight', measurementType: 'duration',
+      description: 'Hold a straight line from head to heels on forearms.',
+      variants: [
+        { level: 1, name: 'Knee plank' },
+        { level: 2, name: 'Full plank' },
+        { level: 3, name: 'Feet-elevated plank' },
       ],
     },
+    easy_run: {
+      name: 'Easy Run', category: 'cardio', modality: 'run', measurementType: 'distance',
+      description: 'Conversational-pace continuous run.',
+    },
+    run_walk_intervals: {
+      name: 'Run/Walk Intervals', category: 'cardio', modality: 'run', measurementType: 'intervals',
+      description: 'Alternate running and walking for the prescribed rounds.',
+    },
+  },
+  weeks: [
     {
-      label: 'Day 3 · Easy run',
-      dayOffset: 2,
-      exercises: [
-        { name: 'Easy Run', category: 'running', defaultUnit: 'distance', target: { kind: 'distance', distanceM: 5000, paceSecPerKm: 360 } },
+      index: 1,
+      focus: 'Introduction week',
+      sessions: [
+        {
+          id: 'w1s1', label: 'Day 1 · Strength', dayOffset: 0,
+          blocks: [
+            {
+              type: 'main',
+              items: [
+                { exerciseId: 'back_squat', target: { kind: 'reps', sets: 3, repsMin: 8, repsMax: 10, weight: 60, restSec: 120 } },
+                { exerciseId: 'plank', target: { kind: 'duration', sets: 3, durationSec: 60, variantLevel: 2 }, optional: true },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'w1s2', label: 'Day 3 · Run', dayOffset: 2,
+          blocks: [
+            {
+              type: 'main',
+              items: [
+                { exerciseId: 'run_walk_intervals', target: { kind: 'intervals', rounds: 6, workSec: 90, recoverySec: 60, recoveryModality: 'walk' } },
+                { exerciseId: 'easy_run', target: { kind: 'distance', distanceM: 3000, paceSecPerKm: 390 }, optional: true },
+              ],
+            },
+          ],
+        },
       ],
     },
   ],

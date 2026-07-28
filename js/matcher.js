@@ -1,10 +1,11 @@
-// Fuzzy matcher: pairs unhandled Strava activities with planned exercises.
+// Fuzzy matcher: pairs unhandled Strava activities with planned block items.
 // Pure functions — no DOM, no storage — so it's trivially unit-testable.
 // Runs client-side on Logs load, so it stays correct when plans are edited
 // after a sync has already happened.
 
 import { STRAVA_TYPE_MAP, MATCH_WINDOW_DAYS } from './config.js';
 import { addDays, diffDays } from './dates.js';
+import { allSessions, sessionItems } from './models.js';
 
 // Returns [{stravaId, planId, sessionId, plannedExerciseId, score}] of NEW
 // suggestions — activities that already have a match record (suggested/
@@ -30,29 +31,39 @@ export function findSuggestions(stravaEntries, plans, matches, exercises, window
   return out;
 }
 
-// All plausible planned exercises for one activity (used both by the
+// Does an exercise plausibly correspond to a Strava activity type?
+// Prefer the finer-grained modality; fall back to category.
+function activityMatches(ex, mapping) {
+  if (mapping.modality) {
+    return ex.modality === mapping.modality || (!ex.modality && ex.category === mapping.category);
+  }
+  return ex.category === mapping.category;
+}
+
+// All plausible planned block items for one activity (used both by the
 // auto-matcher and by the manual "link to plan" picker).
 export function findCandidates(entry, plans, exById, windowDays = MATCH_WINDOW_DAYS) {
-  const category = STRAVA_TYPE_MAP[entry.type] ?? 'other';
+  const mapping = STRAVA_TYPE_MAP[entry.type] ?? { category: 'other' };
   const candidates = [];
   for (const plan of plans) {
     if (plan.status !== 'active') continue;
-    for (const session of plan.sessions) {
-      const sessionDate = addDays(plan.startDate, session.dayOffset);
+    for (const { week, session, dayOffset } of allSessions(plan)) {
+      const sessionDate = addDays(plan.startDate, dayOffset);
       const dayDiff = Math.abs(diffDays(sessionDate, entry.date));
       if (dayDiff > windowDays) continue;
-      for (const pe of session.plannedExercises) {
-        const ex = exById.get(pe.exerciseId);
-        if (!ex || ex.category !== category) continue;
+      for (const { item } of sessionItems(session)) {
+        const ex = exById.get(item.exerciseId);
+        if (!ex || !activityMatches(ex, mapping)) continue;
         candidates.push({
           planId: plan.id,
           sessionId: session.id,
-          plannedExerciseId: pe.id,
+          plannedExerciseId: item.id,
           plan,
+          week,
           session,
-          plannedExercise: pe,
+          plannedExercise: item,
           exercise: ex,
-          score: score(entry, pe, dayDiff),
+          score: score(entry, item, dayDiff),
         });
       }
     }
@@ -61,11 +72,12 @@ export function findCandidates(entry, plans, exById, windowDays = MATCH_WINDOW_D
 }
 
 // Date proximity dominates; distance/duration similarity break ties.
-function score(entry, pe, dayDiff) {
+function score(entry, item, dayDiff) {
   let s = 1 / (1 + dayDiff);
-  const t = pe.target ?? {};
+  const t = item.target ?? {};
   if (entry.distanceM && t.distanceM) s += ratioSim(entry.distanceM, t.distanceM);
   if (entry.movingSec && t.durationSec) s += ratioSim(entry.movingSec, t.durationSec);
+  if (entry.movingSec && t.totalSec) s += ratioSim(entry.movingSec, t.totalSec);
   return s;
 }
 

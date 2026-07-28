@@ -11,10 +11,18 @@ whichever branch is selected in the repo's Pages settings.)*
 
 ## Features
 
-- **Training Plans** — create plans (strength, running, custom) made of ordered
-  sessions; each session pulls exercises from a reusable exercise library.
-  List and calendar views; multiple concurrent plans. Plans can be exported
-  as portable JSON templates and imported back (see below).
+- **Training Plans** — structured multi-week plans (weeks → sessions → blocks
+  → exercises) with phases, deload weeks, and rich targets (rep ranges,
+  holds, rest, RPE, variant levels, intervals). List and calendar views;
+  multiple concurrent plans. Plans import/export as portable
+  `fitness-tracker-plan` v2 JSON (see below).
+- **Fitness Library** — the shared exercise library (descriptions, cues,
+  safety notes, difficulty variants, per-set RWI history) plus **Goals**:
+  bodyweight targets, run-time goals (1 mile / 5k / 10k / custom), and
+  exercise goals, each with live progress against your logs.
+  RWI (Relative Work Index) = (reps or seconds per set) × (goal weight ÷
+  body weight on the day), normalizing bodyweight work as your weight moves
+  toward its goal.
 - **Logs** — today's planned session with inline logging, a one-tap morning
   weigh-in on the Today view, ad-hoc entries, filterable history, body metrics
   (weight, body fat %, resting HR, waist — extensible via `BODY_METRICS` in
@@ -88,7 +96,7 @@ browser — the site only reads the synced JSON.
 
 If the repo is public (or you just want data at rest protected), set an
 encryption password in ⚙ Settings → Privacy. From then on **logs, body
-metrics, and Strava GPS shards** are committed as AES-256-GCM envelopes
+metrics, goals, and Strava GPS shards** are committed as AES-256-GCM envelopes
 (key derived from your password with PBKDF2, 310k iterations) instead of
 readable JSON. Plans, the exercise library, and match links stay plaintext.
 
@@ -105,44 +113,25 @@ readable JSON. Plans, the exercise library, and match links stay plaintext.
 
 ## Plan templates (import / export)
 
-**Export** (on a plan's detail page) downloads the plan as a portable JSON
-file. The format is deliberately hand-editable — exercises are referenced by
-name and scheduling is relative (`dayOffset` from day 0), with no dates or
-internal ids:
+Plans import and export in the **`fitness-tracker-plan` v2 schema**: a
+`plan` metadata object (goal, level, durationWeeks…), an `exerciseLibrary`
+map of snake_case ids → full exercise definitions (description, cues,
+safety notes, variants), optional `phases` and `blockTemplates`, and
+`weeks[] → sessions[] → blocks[] → items[]` where each item is an
+`exerciseId` reference plus a `target`. Target kinds: `reps` (with `reps`
+or `repsMin`/`repsMax`, optional `weight`, `holdSec`), `duration`,
+`distance` (with `paceSecPerKm`), and `intervals` (`rounds`, `workSec`,
+`recoverySec`); all support `sets`, `restSec`, `rpe`, `tempo`,
+`variantLevel`, `perSide`. All stored values are metric.
 
-```json
-{
-  "format": "fitness-tracker-plan",
-  "version": 1,
-  "name": "5k Progression",
-  "type": "running",
-  "sessions": [
-    {
-      "label": "Week 1 · Tempo",
-      "dayOffset": 1,
-      "exercises": [
-        {
-          "name": "Tempo Run",
-          "category": "running",
-          "defaultUnit": "distance",
-          "target": { "kind": "distance", "distanceM": 8000 }
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Import** (on the plans list) accepts a pasted or uploaded file in the same
-format and asks for a start date (the calendar day that `dayOffset: 0` maps
-to). Exercises are matched to your library by name, case-insensitively;
-missing ones are created automatically.
-
-Export → edit the JSON → import is the template workflow: keep a library of
-`.plan.json` files and re-instantiate them with a fresh start date whenever
-you begin a new block. Target shapes: `{"kind":"reps","sets":3,"reps":10,
-"weight":60}`, `{"kind":"distance","distanceM":8000,"paceSecPerKm":330}`, or
-`{"kind":"duration","durationSec":1800}`.
+**Import** (Plans tab) accepts a pasted or uploaded v2 file — older v1
+templates still work — and asks for a start date (the calendar day that
+`dayOffset: 0` maps to). Library exercises are matched by name,
+case-insensitively; missing ones are created with their full definitions,
+and `blockTemplates` are materialized into the sessions that reference
+them. **Export** (plan detail page) produces the same format; ⚙ Settings
+has a starter template download. Scheduling stays relative (dayOffset), so
+exported files re-import with any fresh start date.
 
 ## Development
 
