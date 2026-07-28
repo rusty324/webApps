@@ -376,17 +376,26 @@ function editTarget(pe, ex, done) {
 
 // ---------- Exercise picker ----------
 
-export function pickExercise(onPick) {
-  const search = el('input', { placeholder: 'Search exercises…', autocomplete: 'off' });
+// onPick(exercise, pickerState) — pickerState captures the search query and
+// scroll position so callers can offer a "back" that reopens the picker
+// exactly where the user left it (pass it back as `restore`).
+export function pickExercise(onPick, restore = {}) {
+  const search = el('input', { placeholder: 'Search exercises…', autocomplete: 'off', value: restore.query ?? '' });
   const list = el('div', {});
   let modal;
+
+  const pickerState = () => ({ query: search.value, scroll: list.closest('.modal')?.scrollTop ?? 0 });
 
   function renderList() {
     const q = search.value.trim().toLowerCase();
     const lib = store.get('exercises').filter((e) => !q || e.name.toLowerCase().includes(q));
     list.innerHTML = '';
     for (const ex of lib.slice(0, 30)) {
-      list.appendChild(el('div', { class: 'list-row tappable', onclick: () => { modal.close(); onPick(ex); } },
+      list.appendChild(el('div', { class: 'list-row tappable', onclick: () => {
+        const state = pickerState();
+        modal.close();
+        onPick(ex, state);
+      } },
         el('div', { class: 'row-main' },
           el('div', { class: 'row-title' }, ex.name),
           el('div', { class: 'row-sub' }, `${ex.category} · ${ex.defaultUnit}`),
@@ -406,12 +415,18 @@ export function pickExercise(onPick) {
     el('button', {
       class: 'btn secondary small',
       onclick: () => {
+        const state = pickerState();
         modal.close();
-        editExercise(null, (ex) => onPick(ex), search.value.trim());
+        editExercise(null, (ex) => onPick(ex, state), search.value.trim());
       },
     }, '+ New exercise'),
   ), [{ label: 'Cancel', class: 'btn secondary', onClick: () => {} }]);
-  setTimeout(() => search.focus(), 50);
+  if (restore.scroll) {
+    const modalEl = list.closest('.modal');
+    if (modalEl) modalEl.scrollTop = restore.scroll;
+  } else {
+    setTimeout(() => search.focus(), 50);
+  }
 }
 
 // ---------- Exercise library ----------

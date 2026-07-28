@@ -221,12 +221,14 @@ function plannedRow(plan, session, pe, ex, existing) {
   return row;
 }
 
-function adhocLog() {
-  pickExercise((ex) => logEntryModal({ ex }));
+// Picker state round-trips through the modal's Back button so a mis-click
+// returns to the same search + scroll position instead of starting over.
+function adhocLog(restore) {
+  pickExercise((ex, pickerState) => logEntryModal({ ex, onBack: () => adhocLog(pickerState) }), restore);
 }
 
 // Shared entry modal for planned, ad-hoc, and edit flows.
-function logEntryModal({ existing = null, plan = null, session = null, pe = null, ex = null }) {
+function logEntryModal({ existing = null, plan = null, session = null, pe = null, ex = null, onBack = null }) {
   const entry = existing
     ? JSON.parse(JSON.stringify(existing))
     : makeLogEntry({
@@ -312,6 +314,9 @@ function logEntryModal({ existing = null, plan = null, session = null, pe = null
         store.remove('logs', entry.id);
       },
     });
+  }
+  if (onBack) {
+    actions.unshift({ label: '‹ Back', class: 'btn secondary', onClick: () => onBack() });
   }
   openModal(ex?.name ?? 'Log activity', body, actions);
 }
