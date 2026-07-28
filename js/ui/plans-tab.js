@@ -508,7 +508,9 @@ function editTarget(item, ex, done) {
 // onPick(exercise, pickerState) — pickerState captures the search query and
 // scroll position so callers can offer a "back" that reopens the picker
 // exactly where the user left it (pass it back as `restore`).
-export function pickExercise(onPick, restore = {}) {
+// Archived exercises are hidden here but still resolve everywhere else;
+// excludeId omits one more (used when picking a replacement for it).
+export function pickExercise(onPick, restore = {}, { excludeId = null } = {}) {
   const search = el('input', { placeholder: 'Search exercises…', autocomplete: 'off', value: restore.query ?? '' });
   const list = el('div', {});
   let modal;
@@ -517,7 +519,9 @@ export function pickExercise(onPick, restore = {}) {
 
   function renderList() {
     const q = search.value.trim().toLowerCase();
-    const lib = store.get('exercises').filter((e) => !q || e.name.toLowerCase().includes(q));
+    const lib = store.get('exercises')
+      .filter((e) => !e.archived && e.id !== excludeId)
+      .filter((e) => !q || e.name.toLowerCase().includes(q));
     list.innerHTML = '';
     for (const ex of lib.slice(0, 30)) {
       list.appendChild(el('div', { class: 'list-row tappable', onclick: () => {
@@ -744,6 +748,8 @@ export function libraryUpserter() {
         if (def[k]?.length && !rec[k]?.length) { rec[k] = def[k]; changed = true; enriched = true; }
       }
       if (def.perSide && !rec.perSide) { rec.perSide = true; changed = true; enriched = true; }
+      // Importing a plan that uses an archived exercise puts it back in play.
+      if (rec.archived) { rec.archived = false; changed = true; enriched = true; }
       if (enriched && !wasNew) stats.enriched++;
       return rec.id;
     },

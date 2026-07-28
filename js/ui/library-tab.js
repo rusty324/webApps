@@ -7,7 +7,7 @@
 // at the time of the set). As you approach your goal weight the ratio → 1.
 
 import * as store from '../storage/store.js';
-import { makeGoal } from '../models.js';
+import { makeGoal, exerciseUsage, remapExercise } from '../models.js';
 import { RUN_GOAL_PRESETS } from '../config.js';
 import { todayStr, formatDate, formatDuration } from '../dates.js';
 import {
@@ -68,17 +68,25 @@ function renderExerciseList() {
     root.appendChild(emptyState('No exercises yet. They’re also created automatically when importing plans.'));
     return;
   }
-  const card = el('div', { class: 'card' });
-  for (const ex of [...lib].sort((a, b) => a.name.localeCompare(b.name))) {
-    card.appendChild(el('div', { class: 'list-row tappable', onclick: () => { view = { name: 'exercise', id: ex.id }; render(); } },
-      el('div', { class: 'row-main' },
-        el('div', { class: 'row-title' }, ex.name),
-        el('div', { class: 'row-sub' }, `${ex.category} · ${ex.modality} · ${ex.measurementType}`),
-      ),
-      el('span', { class: 'pill' }, String(logCountFor(ex.id)) + ' logs'),
-    ));
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const active = lib.filter((e) => !e.archived).sort(byName);
+  const archived = lib.filter((e) => e.archived).sort(byName);
+
+  const row = (ex) => el('div', { class: 'list-row tappable', onclick: () => { view = { name: 'exercise', id: ex.id }; render(); } },
+    el('div', { class: 'row-main' },
+      el('div', { class: 'row-title' }, ex.name),
+      el('div', { class: 'row-sub' }, `${ex.category} · ${ex.modality} · ${ex.measurementType}`),
+    ),
+    el('span', { class: 'pill' }, String(logCountFor(ex.id)) + ' logs'),
+  );
+
+  if (active.length) root.appendChild(el('div', { class: 'card' }, active.map(row)));
+  else root.appendChild(el('p', { class: 'muted' }, 'All exercises are archived.'));
+
+  if (archived.length) {
+    root.appendChild(el('h3', { class: 'muted' }, 'Archived'));
+    root.appendChild(el('div', { class: 'card' }, archived.map(row)));
   }
-  root.appendChild(card);
 }
 
 function logCountFor(exerciseId) {
@@ -187,15 +195,16 @@ function renderExerciseDetail(id) {
     ),
     el('div', { class: 'row-actions' },
       el('button', { class: 'btn small secondary', onclick: () => editExercise(ex, () => render()) }, 'Edit'),
-      el('button', {
-        class: 'btn small danger',
-        onclick: async () => {
-          if (!(await confirmDialog(`Delete “${ex.name}” from the library?`))) return;
-          store.remove('exercises', ex.id);
-          view = { name: 'exercises' };
-          render();
-        },
-      }, 'Delete'),
+      ex.archived
+        ? el('button', {
+            class: 'btn small secondary',
+            onclick: () => {
+              store.upsert('exercises', { ...ex, archived: false });
+              toast('Restored to the library');
+              render();
+            },
+          }, 'Unarchive')
+        : el('button', { class: 'btn small danger', onclick: () => deleteExerciseFlow(ex) }, 'Delete'),
     ),
   ));
 
@@ -205,6 +214,7 @@ function renderExerciseDetail(id) {
     el('span', { class: 'pill' }, ex.modality), ' ',
     el('span', { class: 'pill' }, ex.measurementType),
     ex.perSide ? [' ', el('span', { class: 'pill warn' }, 'per side')] : '',
+    ex.archived ? [' ', el('span', { class: 'pill warn' }, 'archived')] : '',
   ));
 
   if (ex.description) root.appendChild(el('p', {}, ex.description));
@@ -239,6 +249,81 @@ function renderExerciseDetail(id) {
   if (ex.progressionRule) root.appendChild(el('p', { class: 'muted' }, `Progression: ${ex.progressionRule}`));
 
   root.appendChild(rwiSection(ex));
+}
+
+// ---------- Deletion ----------
+
+// Deleting an exercise that plans, logs, or goals still reference would
+// leave dangling ids behind, so an in-use exercise offers safer routes
+// first: repoint everything at a replacement, or archive it instead.
+function deleteExerciseFlow(ex) {
+  const usage = exerciseUsage(ex.id, store.get('plans'), store.get('logs'), store.get('goals'));
+
+  if (!usage.any) {
+    confirmDialog(`Delete “${ex.name}” from the library?`).then((ok) => {
+      if (!ok) return;
+      store.remove('exercises', ex.id);
+      view = { name: 'exercises' };
+      render();
+    });
+    return;
+  }
+
+  const parts = [];
+  if (usage.planItems) {
+    parts.push(`${usage.planItems} planned exercise${usage.planItems === 1 ? '' : 's'} in `
+      + `${usage.planNames.length} plan${usage.planNames.length === 1 ? '' : 's'} (${usage.planNames.join(', ')})`);
+  }
+  if (usage.logs) parts.push(`${usage.logs} log entr${usage.logs === 1 ? 'y' : 'ies'}`);
+  if (usage.goals) parts.push(`${usage.goals} goal${usage.goals === 1 ? '' : 's'}`);
+
+  const option = (label, cls, description, onclick) => el('div', { style: 'margin-bottom:14px' },
+    el('button', { class: `btn ${cls}`, style: 'width:100%', onclick }, label),
+    el('p', { class: 'muted', style: 'margin:6px 0 0' }, description),
+  );
+
+  let modal;
+  modal = openModal(`Delete “${ex.name}”?`, el('div', {},
+    el('p', {}, 'Still used by ', el('b', {}, parts.join(', ')), '.'),
+    option('Replace with another exercise…', '',
+      'Pick a replacement — every plan, log, and goal switches over to it, then this one is deleted. Nothing is orphaned.',
+      () => {
+        modal.close();
+        pickExercise((replacement) => {
+          const next = remapExercise(ex.id, replacement.id, {
+            plans: store.get('plans'),
+            logs: store.get('logs'),
+            goals: store.get('goals'),
+          });
+          store.save('plans', next.plans);
+          store.save('logs', next.logs);
+          store.save('goals', next.goals);
+          store.remove('exercises', ex.id);
+          toast(`Replaced with “${replacement.name}”`);
+          view = { name: 'exercises' };
+          render();
+        }, {}, { excludeId: ex.id });
+      }),
+    option('Archive instead', 'secondary',
+      'Hides it from exercise pickers but keeps every existing reference working. You can unarchive it later.',
+      () => {
+        modal.close();
+        store.upsert('exercises', { ...ex, archived: true });
+        toast(`“${ex.name}” archived`);
+        view = { name: 'exercises' };
+        render();
+      }),
+    option('Delete anyway', 'danger',
+      'Plans and history keep the reference but show “Unknown exercise”, running charts drop those logs, '
+      + 'and Strava auto-matching stops suggesting it.',
+      async () => {
+        modal.close();
+        if (!(await confirmDialog(`Permanently delete “${ex.name}” and leave ${parts.join(', ')} orphaned?`))) return;
+        store.remove('exercises', ex.id);
+        view = { name: 'exercises' };
+        render();
+      }),
+  ), [{ label: 'Cancel', class: 'btn secondary', onClick: () => {} }]);
 }
 
 // ---------- RWI ----------

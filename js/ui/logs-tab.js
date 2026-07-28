@@ -237,6 +237,17 @@ function plannedRow(plan, session, pe, ex, existing) {
   return row;
 }
 
+// Which form an already-recorded entry needs, read from the data itself.
+// null when there's nothing recorded yet, so callers fall back to the plan
+// target or the exercise's measurement type.
+function inferKind(actual) {
+  if (!actual) return null;
+  if (actual.distanceM != null || actual.movingSec != null) return 'distance';
+  if (actual.durationSec != null) return 'duration';
+  if (actual.sets != null || actual.reps != null || actual.weight != null) return 'reps';
+  return null;
+}
+
 // Picker state round-trips through the modal's Back button so a mis-click
 // returns to the same search + scroll position instead of starting over.
 function adhocLog(restore) {
@@ -253,9 +264,14 @@ function logEntryModal({ existing = null, plan = null, session = null, pe = null
         exerciseId: ex?.id ?? null,
       });
 
+  // What the entry already holds wins: the form must be able to represent
+  // existing data even when the exercise it referenced has been deleted,
+  // because Save rebuilds `actual` from whichever fields are shown.
   // Intervals are logged as a completed duration (total time), which keeps
   // the entry comparable with duration work.
-  let kind = pe?.target?.kind ?? (['distance', 'duration'].includes(ex?.measurementType) ? ex.measurementType : 'reps');
+  let kind = (existing ? inferKind(existing.actual) : null)
+    ?? pe?.target?.kind
+    ?? (['distance', 'duration'].includes(ex?.measurementType) ? ex.measurementType : 'reps');
   if (kind === 'intervals') kind = 'duration';
   const a = entry.actual ?? {};
   const t = pe?.target ?? {};

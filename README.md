@@ -19,8 +19,10 @@ whichever branch is selected in the repo's Pages settings.)*
 - **Fitness Library** — the shared exercise library (descriptions, cues,
   safety notes, difficulty variants, per-set RWI history), with import
   (an `exerciseLibrary` map, a whole plan file, a single exercise, or an
-  array) and whole-library export (definitions only, no history), plus
-  **Goals**:
+  array) and whole-library export (definitions only, no history). Deleting
+  an exercise that plans, logs, or goals still reference shows what uses it
+  and offers to repoint everything at a replacement, or to archive it
+  (hidden from pickers, existing references intact) instead. Plus **Goals**:
   bodyweight targets, run-time goals (1 mile / 5k / 10k / custom), and
   exercise goals, each with live progress against your logs.
   RWI (Relative Work Index) = (reps or seconds per set) × (goal weight ÷

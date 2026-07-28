@@ -55,6 +55,7 @@ export function makeExercise({ name = '', category = 'strength', modality = 'oth
   return {
     id: uid(),
     name,
+    archived: false, // hidden from pickers; existing references keep resolving
     shortName: '',
     category, // CATEGORIES
     modality, // MODALITIES
@@ -196,6 +197,61 @@ export function sessionItems(session) {
 
 export function phaseForWeek(plan, weekIndex) {
   return (plan.phases ?? []).find((p) => weekIndex >= p.weekStart && weekIndex <= p.weekEnd) ?? null;
+}
+
+// ---------- referential integrity helpers ----------
+
+// Everything that points at an exercise, so deletion can warn before it
+// orphans plans, logs, or goals.
+export function exerciseUsage(exerciseId, plans, logs, goals) {
+  let planItems = 0;
+  const planNames = new Set();
+  for (const plan of plans) {
+    for (const { session } of allSessions(plan)) {
+      for (const { item } of sessionItems(session)) {
+        if (item.exerciseId === exerciseId) {
+          planItems++;
+          planNames.add(plan.name);
+        }
+      }
+    }
+  }
+  return {
+    planItems,
+    planNames: [...planNames],
+    logs: logs.filter((l) => l.exerciseId === exerciseId).length,
+    goals: goals.filter((g) => g.exerciseId === exerciseId).length,
+    get any() {
+      return this.planItems > 0 || this.logs > 0 || this.goals > 0;
+    },
+  };
+}
+
+// Repoint every reference from one exercise to another. Pure — returns new
+// collections, touching only the records that actually referenced fromId.
+export function remapExercise(fromId, toId, { plans, logs, goals }) {
+  const nextPlans = plans.map((plan) => {
+    let touched = false;
+    const copy = JSON.parse(JSON.stringify(plan));
+    for (const week of copy.weeks ?? []) {
+      for (const session of week.sessions ?? []) {
+        for (const block of session.blocks ?? []) {
+          for (const item of block.items ?? []) {
+            if (item.exerciseId === fromId) {
+              item.exerciseId = toId;
+              touched = true;
+            }
+          }
+        }
+      }
+    }
+    return touched ? copy : plan;
+  });
+  return {
+    plans: nextPlans,
+    logs: logs.map((l) => (l.exerciseId === fromId ? { ...l, exerciseId: toId } : l)),
+    goals: goals.map((g) => (g.exerciseId === fromId ? { ...g, exerciseId: toId } : g)),
+  };
 }
 
 export function sanitizeCategory(c) {
