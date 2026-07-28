@@ -13,7 +13,8 @@ whichever branch is selected in the repo's Pages settings.)*
 
 - **Training Plans** — create plans (strength, running, custom) made of ordered
   sessions; each session pulls exercises from a reusable exercise library.
-  List and calendar views; multiple concurrent plans.
+  List and calendar views; multiple concurrent plans. Plans can be exported
+  as portable JSON templates and imported back (see below).
 - **Logs** — today's planned session with inline logging, ad-hoc entries,
   filterable history, body-weight tracking, weight/pace/distance trend charts,
   and a plan-adherence percentage.
@@ -74,6 +75,47 @@ The `Strava sync` workflow then runs every 4 hours (or on demand from the
 Actions tab / the in-app button) and commits new activities to
 `data/strava/activities-YYYY-MM.json`. Strava credentials never reach the
 browser — the site only reads the synced JSON.
+
+## Plan templates (import / export)
+
+**Export** (on a plan's detail page) downloads the plan as a portable JSON
+file. The format is deliberately hand-editable — exercises are referenced by
+name and scheduling is relative (`dayOffset` from day 0), with no dates or
+internal ids:
+
+```json
+{
+  "format": "fitness-tracker-plan",
+  "version": 1,
+  "name": "5k Progression",
+  "type": "running",
+  "sessions": [
+    {
+      "label": "Week 1 · Tempo",
+      "dayOffset": 1,
+      "exercises": [
+        {
+          "name": "Tempo Run",
+          "category": "running",
+          "defaultUnit": "distance",
+          "target": { "kind": "distance", "distanceM": 8000 }
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Import** (on the plans list) accepts a pasted or uploaded file in the same
+format and asks for a start date (the calendar day that `dayOffset: 0` maps
+to). Exercises are matched to your library by name, case-insensitively;
+missing ones are created automatically.
+
+Export → edit the JSON → import is the template workflow: keep a library of
+`.plan.json` files and re-instantiate them with a fresh start date whenever
+you begin a new block. Target shapes: `{"kind":"reps","sets":3,"reps":10,
+"weight":60}`, `{"kind":"distance","distanceM":8000,"paceSecPerKm":330}`, or
+`{"kind":"duration","durationSec":1800}`.
 
 ## Development
 

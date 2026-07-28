@@ -53,7 +53,10 @@ function renderPlanList() {
 
   root.appendChild(el('div', { class: 'list-row' },
     el('h2', {}, 'Training plans'),
-    el('button', { class: 'btn small', onclick: () => editPlanMeta(null) }, '+ New plan'),
+    el('div', { class: 'row-actions' },
+      el('button', { class: 'btn small secondary', onclick: () => importPlanModal() }, 'Import'),
+      el('button', { class: 'btn small', onclick: () => editPlanMeta(null) }, '+ New plan'),
+    ),
   ));
 
   if (!plans.length) {
@@ -148,7 +151,10 @@ function renderPlanDetail(planId) {
     el('div', { class: 'row-main' },
       el('button', { class: 'btn small secondary', onclick: () => { view = { name: 'list' }; render(); } }, '‹ Plans'),
     ),
-    el('button', { class: 'btn small secondary', onclick: () => editPlanMeta(plan) }, 'Edit'),
+    el('div', { class: 'row-actions' },
+      el('button', { class: 'btn small secondary', onclick: () => exportPlan(plan) }, 'Export'),
+      el('button', { class: 'btn small secondary', onclick: () => editPlanMeta(plan) }, 'Edit'),
+    ),
   ));
   root.appendChild(el('h2', {}, plan.name, ' ', el('span', { class: 'pill accent' }, plan.type)));
 
@@ -464,6 +470,154 @@ function renderLibrary() {
     ));
   }
   root.appendChild(card);
+}
+
+// ---------- Import / export ----------
+// One portable, hand-editable format serves export, import, and templates:
+// exercises are inlined by name (no internal ids), scheduling is relative
+// (dayOffset only — no dates), so an exported file can be edited in any
+// text editor and re-imported, into this or another instance.
+//
+// {
+//   "format": "fitness-tracker-plan", "version": 1,
+//   "name": "...", "type": "running",
+//   "sessions": [
+//     { "label": "Week 1 · Day 1", "dayOffset": 0,
+//       "exercises": [
+//         { "name": "Tempo Run", "category": "running", "defaultUnit": "distance",
+//           "target": { "kind": "distance", "distanceM": 8000 } }
+//       ] }
+//   ]
+// }
+
+export function serializePlan(plan) {
+  const lib = new Map(store.get('exercises').map((e) => [e.id, e]));
+  return {
+    format: 'fitness-tracker-plan',
+    version: 1,
+    name: plan.name,
+    type: plan.type,
+    sessions: plan.sessions.map((s) => ({
+      label: s.label,
+      dayOffset: s.dayOffset,
+      exercises: [...s.plannedExercises]
+        .sort((a, b) => a.order - b.order)
+        .map((pe) => {
+          const ex = lib.get(pe.exerciseId);
+          return {
+            name: ex?.name ?? 'Unknown exercise',
+            category: ex?.category ?? 'other',
+            defaultUnit: ex?.defaultUnit ?? 'reps',
+            target: pe.target ?? {},
+          };
+        }),
+    })),
+  };
+}
+
+function exportPlan(plan) {
+  const json = JSON.stringify(serializePlan(plan), null, 2);
+  const slug = plan.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'plan';
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: `${slug}.plan.json` });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast('Exported — edit the file as a template and re-import it anytime');
+}
+
+// Builds a fresh plan (new ids) from a portable object. Exercises are matched
+// to the library by name, case-insensitively; missing ones are created.
+export function importPlan(data, startDate) {
+  if (!data || typeof data !== 'object' || typeof data.name !== 'string' || !Array.isArray(data.sessions)) {
+    throw new Error('Not a plan file: expected { name, sessions: [...] }');
+  }
+  const library = store.get('exercises').slice();
+  const byName = new Map(library.map((e) => [e.name.toLowerCase(), e]));
+  let libChanged = false;
+
+  const plan = makePlan({ name: data.name, type: data.type || 'custom', startDate });
+  for (const s of data.sessions) {
+    const session = makeSession({
+      label: typeof s.label === 'string' ? s.label : '',
+      dayOffset: Number.isFinite(Number(s.dayOffset)) ? Number(s.dayOffset) : 0,
+    });
+    (s.exercises ?? s.plannedExercises ?? []).forEach((def, i) => {
+      const name = (def.name ?? '').trim() || 'Exercise';
+      let ex = byName.get(name.toLowerCase());
+      if (!ex) {
+        ex = makeExercise({
+          name,
+          category: CATEGORIES.includes(def.category) ? def.category : 'other',
+          defaultUnit: ['reps', 'duration', 'distance'].includes(def.defaultUnit) ? def.defaultUnit : 'reps',
+        });
+        library.push(ex);
+        byName.set(name.toLowerCase(), ex);
+        libChanged = true;
+      }
+      session.plannedExercises.push(makePlannedExercise({
+        sessionId: session.id,
+        exerciseId: ex.id,
+        target: def.target && typeof def.target === 'object' ? def.target : {},
+        order: i,
+      }));
+    });
+    plan.sessions.push(session);
+  }
+  if (libChanged) store.save('exercises', library);
+  store.upsert('plans', plan);
+  return plan;
+}
+
+function importPlanModal() {
+  const textarea = el('textarea', {
+    placeholder: 'Paste a plan JSON here, or pick a file below…',
+    style: 'min-height:140px;font-family:monospace;font-size:0.8rem',
+  });
+  const fileInput = el('input', {
+    type: 'file',
+    accept: '.json,application/json',
+    onchange: () => {
+      const f = fileInput.files?.[0];
+      if (!f) return;
+      f.text().then((t) => { textarea.value = t; }).catch(() => toast('Could not read file', 'error'));
+    },
+  });
+  const dateInput = el('input', { type: 'date', value: todayStr() });
+  openModal('Import plan', el('div', {},
+    el('div', { class: 'field' }, el('label', {}, 'Plan JSON'), textarea),
+    el('div', { class: 'field' }, el('label', {}, 'Or choose a file'), fileInput),
+    el('div', { class: 'field' }, el('label', {}, 'Start date (day 0 of the plan)'), dateInput),
+    el('p', { class: 'muted' },
+      'Exercises are matched to your library by name; any that don’t exist yet are created. ',
+      'Tip: “Export” on any plan produces a file in this format — edit it as a template and import it back.'),
+  ), [
+    { label: 'Cancel', class: 'btn secondary', onClick: () => {} },
+    {
+      label: 'Import',
+      class: 'btn',
+      onClick: () => {
+        let data;
+        try {
+          data = JSON.parse(textarea.value);
+        } catch {
+          toast('That isn’t valid JSON', 'error');
+          return false;
+        }
+        try {
+          const plan = importPlan(data, dateInput.value || todayStr());
+          toast(`Imported “${plan.name}”`);
+          view = { name: 'plan', planId: plan.id };
+          render();
+        } catch (e) {
+          toast(e.message, 'error');
+          return false;
+        }
+      },
+    },
+  ]);
 }
 
 // ---------- Calendar ----------
