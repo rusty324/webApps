@@ -1,0 +1,44 @@
+name: Strava sync
+
+on:
+  schedule:
+    - cron: '17 */4 * * *' # every 4h, off the top of the hour
+  workflow_dispatch: {}
+
+concurrency:
+  group: strava-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fitnessTracker
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Pull new Strava activities
+        env:
+          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+        run: node scripts/strava-sync.mjs
+
+      - name: Commit and push
+        run: |
+          git config user.name "strava-sync[bot]"
+          git config user.email "strava-sync@users.noreply.github.com"
+          git add data/strava
+          if git diff --cached --quiet; then
+            echo "No new activities"
+            exit 0
+          fi
+          git commit -m "Sync Strava activities"
+          git push || (git pull --rebase && git push)
