@@ -60,3 +60,13 @@ export function toast(message, type = '') {
 export function emptyState(message) {
   return el('div', { class: 'empty-state' }, message);
 }
+
+export function downloadJson(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

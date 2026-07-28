@@ -10,7 +10,7 @@ import {
   weightUnit, weightToInput, weightFromInput,
   distanceUnit, distanceToInput, distanceFromInput, paceToInput, paceFromInput,
 } from '../units.js';
-import { el, openModal, confirmDialog, toast, emptyState } from './components.js';
+import { el, openModal, confirmDialog, toast, emptyState, downloadJson } from './components.js';
 
 let root = null;
 let unsub = null;
@@ -519,15 +519,8 @@ export function serializePlan(plan) {
 }
 
 function exportPlan(plan) {
-  const json = JSON.stringify(serializePlan(plan), null, 2);
   const slug = plan.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'plan';
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = el('a', { href: url, download: `${slug}.plan.json` });
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  downloadJson(`${slug}.plan.json`, serializePlan(plan));
   toast('Exported — edit the file as a template and re-import it anytime');
 }
 

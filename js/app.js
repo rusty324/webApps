@@ -3,7 +3,33 @@ import { getUnits, setUnits } from './units.js';
 import * as store from './storage/store.js';
 import { getToken, setToken, hasToken } from './storage/github-api.js';
 import { initTabbar } from './ui/tabbar.js';
-import { el, openModal, toast } from './ui/components.js';
+import { el, openModal, toast, downloadJson } from './ui/components.js';
+
+// Starter template for the Plans tab's Import — shows every target kind so
+// it can be edited in any text editor and imported as-is.
+const EXAMPLE_TEMPLATE = {
+  format: 'fitness-tracker-plan',
+  version: 1,
+  name: 'Example Plan (edit me)',
+  type: 'custom',
+  sessions: [
+    {
+      label: 'Day 1 · Strength',
+      dayOffset: 0,
+      exercises: [
+        { name: 'Back Squat', category: 'strength', defaultUnit: 'reps', target: { kind: 'reps', sets: 3, reps: 8, weight: 60 } },
+        { name: 'Plank', category: 'strength', defaultUnit: 'duration', target: { kind: 'duration', durationSec: 120 } },
+      ],
+    },
+    {
+      label: 'Day 3 · Easy run',
+      dayOffset: 2,
+      exercises: [
+        { name: 'Easy Run', category: 'running', defaultUnit: 'distance', target: { kind: 'distance', distanceM: 5000, paceSecPerKm: 360 } },
+      ],
+    },
+  ],
+};
 
 const badge = document.getElementById('sync-badge');
 
@@ -83,6 +109,18 @@ function openSettings() {
     el('p', { class: 'muted' },
       'The token stays in this browser (localStorage) and is only sent to api.github.com. ',
       'Heads-up: if the repo is public, everything synced to it — including GPS routes — is public too.',
+    ),
+    el('h3', {}, 'Plan templates'),
+    el('button', {
+      class: 'btn secondary',
+      onclick: () => {
+        downloadJson('example.plan.json', EXAMPLE_TEMPLATE);
+        toast('Template downloaded — edit it, then use Import on the Plans tab');
+      },
+    }, 'Download plan template'),
+    el('p', { class: 'muted' },
+      'A starter .plan.json showing all target types (weights and distances are metric: kg / meters). ',
+      'Edit it in any text editor and import it from the Plans tab.',
     ),
   );
   openModal('Settings', body, [
