@@ -72,14 +72,17 @@ export function makeLogEntry({
   };
 }
 
-export function makeBodyMetric({ date = todayStr(), weight = null, notes = '' } = {}) {
-  return {
-    id: uid(),
-    date,
-    weight, // kg
-    notes,
-    // structured so more metrics (bodyfat, resting HR, ...) can be added later
-  };
+// One record per weigh-in/measurement session; every metric field is
+// optional (see BODY_METRICS in config.js for the recordable set).
+export function makeBodyMetric({
+  date = todayStr(),
+  weight = null, // kg
+  bodyFat = null, // %
+  restingHr = null, // bpm
+  waist = null, // cm
+  notes = '',
+} = {}) {
+  return { id: uid(), date, weight, bodyFat, restingHr, waist, notes };
 }
 
 // A Strava activity record as written by scripts/strava-sync.mjs. The browser

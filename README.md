@@ -15,9 +15,11 @@ whichever branch is selected in the repo's Pages settings.)*
   sessions; each session pulls exercises from a reusable exercise library.
   List and calendar views; multiple concurrent plans. Plans can be exported
   as portable JSON templates and imported back (see below).
-- **Logs** — today's planned session with inline logging, ad-hoc entries,
-  filterable history, body-weight tracking, weight/pace/distance trend charts,
-  and a plan-adherence percentage.
+- **Logs** — today's planned session with inline logging, a one-tap morning
+  weigh-in on the Today view, ad-hoc entries, filterable history, body metrics
+  (weight, body fat %, resting HR, waist — extensible via `BODY_METRICS` in
+  `js/config.js`), per-metric trend charts plus pace/distance charts, and a
+  plan-adherence percentage.
 - **Strava sync** — a scheduled workflow pulls new activities into
   `data/strava/`; a fuzzy matcher suggests links between synced activities and
   planned sessions (one-tap confirm/reject).

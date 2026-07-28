@@ -4,7 +4,7 @@
 import * as store from '../storage/store.js';
 import { makeLogEntry, makeBodyMetric, makeMatch } from '../models.js';
 import { findSuggestions, findCandidates } from '../matcher.js';
-import { STRAVA_TYPE_MAP } from '../config.js';
+import { STRAVA_TYPE_MAP, BODY_METRICS } from '../config.js';
 import {
   todayStr, addDays, diffDays, formatDate, formatDateLong,
   formatDuration, formatPace, formatKm,
@@ -116,6 +116,7 @@ function renderToday() {
   );
 
   root.appendChild(el('h2', {}, formatDateLong(today)));
+  root.appendChild(weighInCard(today));
 
   let anyPlanned = false;
   for (const plan of activePlans()) {
@@ -139,6 +140,46 @@ function renderToday() {
     ));
   }
   root.appendChild(el('button', { class: 'btn', onclick: () => adhocLog() }, '+ Log ad-hoc activity'));
+}
+
+// One-tap daily weigh-in. Prefills the last known weight; merges into
+// today's metric record if one already exists (no duplicate same-day rows).
+function weighInCard(today) {
+  const metrics = store.get('metrics');
+  const todays = metrics.find((m) => m.date === today);
+
+  if (todays?.weight != null) {
+    return el('div', { class: 'card' },
+      el('div', { class: 'list-row', style: 'border:none;padding:0' },
+        el('div', { class: 'row-main' },
+          el('div', { class: 'row-title' }, `${todays.weight} kg `, el('span', { class: 'pill ok' }, 'weighed in')),
+          metricSummary(todays) !== `${todays.weight} kg` && el('div', { class: 'row-sub' }, metricSummary(todays)),
+        ),
+        el('button', { class: 'btn small secondary', onclick: () => logBodyMetric(todays) }, 'Edit'),
+      ),
+    );
+  }
+
+  const last = [...metrics].filter((m) => m.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+  const input = el('input', {
+    type: 'number', inputmode: 'decimal', step: 0.1,
+    value: last?.weight ?? '', placeholder: 'kg', 'aria-label': 'Weight (kg)',
+  });
+  const save = () => {
+    const w = parseFloat(input.value);
+    if (isNaN(w)) { toast('Enter a weight', 'error'); return; }
+    const entry = todays ? { ...todays, weight: w } : makeBodyMetric({ date: today, weight: w });
+    store.upsert('metrics', entry);
+    toast('Weight logged');
+  };
+  return el('div', { class: 'card' },
+    el('div', { class: 'row-sub', style: 'margin-bottom:6px' }, 'Morning weigh-in'),
+    el('div', { class: 'log-inputs', style: 'margin:0' },
+      input,
+      el('button', { class: 'btn small', onclick: save }, 'Log'),
+      el('button', { class: 'btn small secondary', onclick: () => logBodyMetric(todays ?? null) }, 'More…'),
+    ),
+  );
 }
 
 function plannedRow(plan, session, pe, ex, existing) {
@@ -452,16 +493,26 @@ function renderMetrics() {
     }, `${d} days`)),
   ));
 
-  // Weight
+  // Body metrics: weight chart always, other metrics only once they have
+  // enough data to draw a trend.
   root.appendChild(el('div', { class: 'list-row' },
     el('h3', {}, 'Body weight'),
-    el('button', { class: 'btn small', onclick: () => logWeight() }, '+ Log weight'),
+    el('button', { class: 'btn small', onclick: () => logBodyMetric() }, '+ Log metrics'),
   ));
-  root.appendChild(lineChart({
-    points: datePoints(metrics.filter((m) => m.weight != null), (m) => m.weight, (m) => `${m.date}: ${m.weight} kg`),
-    yLabel: 'kg',
-    yFormat: (v) => v.toFixed(1),
-  }));
+  for (const m of BODY_METRICS) {
+    const points = datePoints(
+      metrics.filter((r) => r[m.id] != null),
+      (r) => r[m.id],
+      (r) => `${r.date}: ${r[m.id]} ${m.unit}`,
+    );
+    if (m.id !== 'weight' && points.length < 2) continue;
+    if (m.id !== 'weight') root.appendChild(el('h3', {}, m.label));
+    root.appendChild(lineChart({
+      points,
+      yLabel: m.unit,
+      yFormat: (v) => (m.step >= 1 ? String(Math.round(v)) : v.toFixed(1)),
+    }));
+  }
 
   // Running pace + distance from all sources
   const runs = runningActivities();
@@ -482,11 +533,11 @@ function renderMetrics() {
   }));
 
   if (metrics.length) {
-    const card = el('div', { class: 'card' }, el('h3', {}, 'Weight entries'));
+    const card = el('div', { class: 'card' }, el('h3', {}, 'Recent entries'));
     for (const m of [...metrics].reverse().slice(0, 10)) {
       card.appendChild(el('div', { class: 'list-row' },
-        el('div', { class: 'row-main tappable', onclick: () => logWeight(m) },
-          el('div', { class: 'row-title' }, `${m.weight} kg`),
+        el('div', { class: 'row-main tappable', onclick: () => logBodyMetric(m) },
+          el('div', { class: 'row-title' }, metricSummary(m) || '—'),
           el('div', { class: 'row-sub' }, formatDate(m.date, { month: 'short', day: 'numeric', year: 'numeric' }), m.notes ? ` · ${m.notes}` : ''),
         ),
       ));
@@ -538,10 +589,13 @@ function adherence(days) {
   return { done, planned };
 }
 
-function logWeight(existing = null) {
+function logBodyMetric(existing = null) {
   const entry = existing ? { ...existing } : makeBodyMetric();
   const dateIn = el('input', { type: 'date', value: entry.date });
-  const weightIn = el('input', { type: 'number', inputmode: 'decimal', step: 0.1, value: entry.weight ?? '' });
+  const inputs = new Map(BODY_METRICS.map((m) => [
+    m.id,
+    el('input', { type: 'number', inputmode: 'decimal', step: m.step, value: entry[m.id] ?? '' }),
+  ]));
   const notesIn = el('input', { value: entry.notes ?? '', placeholder: 'optional' });
   const actions = [
     { label: 'Cancel', class: 'btn secondary', onClick: () => {} },
@@ -549,9 +603,16 @@ function logWeight(existing = null) {
       label: 'Save',
       class: 'btn',
       onClick: () => {
-        const w = parseFloat(weightIn.value);
-        if (isNaN(w)) { toast('Enter a weight', 'error'); return false; }
-        Object.assign(entry, { date: dateIn.value || todayStr(), weight: w, notes: notesIn.value.trim() });
+        const values = {};
+        for (const m of BODY_METRICS) {
+          const v = parseFloat(inputs.get(m.id).value);
+          values[m.id] = isNaN(v) ? null : v;
+        }
+        if (Object.values(values).every((v) => v == null)) {
+          toast('Enter at least one measurement', 'error');
+          return false;
+        }
+        Object.assign(entry, values, { date: dateIn.value || todayStr(), notes: notesIn.value.trim() });
         store.upsert('metrics', entry);
       },
     },
@@ -565,13 +626,22 @@ function logWeight(existing = null) {
       },
     });
   }
-  openModal('Body weight', el('div', {},
-    el('div', { class: 'field-row' },
-      el('div', { class: 'field' }, el('label', {}, 'Date'), dateIn),
-      el('div', { class: 'field' }, el('label', {}, 'Weight (kg)'), weightIn),
-    ),
+  const metricFields = BODY_METRICS.map((m) =>
+    el('div', { class: 'field' }, el('label', {}, `${m.label} (${m.unit})`), inputs.get(m.id)));
+  openModal('Body metrics', el('div', {},
+    el('div', { class: 'field' }, el('label', {}, 'Date'), dateIn),
+    el('div', { class: 'field-row' }, metricFields.slice(0, 2)),
+    el('div', { class: 'field-row' }, metricFields.slice(2)),
     el('div', { class: 'field' }, el('label', {}, 'Notes'), notesIn),
   ), actions);
+}
+
+// Summary like "82.0 kg · 15.2 % · 48 bpm" for the entries list.
+function metricSummary(entry) {
+  return BODY_METRICS
+    .filter((m) => entry[m.id] != null)
+    .map((m) => `${entry[m.id]} ${m.unit}`)
+    .join(' · ');
 }
 
 // ---------- Heatmap ----------
