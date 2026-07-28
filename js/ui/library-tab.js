@@ -14,8 +14,8 @@ import {
   formatWeight, formatDistance, formatPace, weightUnit, weightToInput, weightFromInput,
   distanceToInput, distanceFromInput, distanceUnit,
 } from '../units.js';
-import { el, openModal, confirmDialog, toast, emptyState } from './components.js';
-import { editExercise, pickExercise, targetSummary } from './plans-tab.js';
+import { el, openModal, confirmDialog, toast, emptyState, downloadJson } from './components.js';
+import { editExercise, pickExercise, targetSummary, libraryUpserter, exerciseDef, slug } from './plans-tab.js';
 
 let root = null;
 let unsub = null;
@@ -58,7 +58,11 @@ function renderExerciseList() {
   const lib = store.get('exercises');
   root.appendChild(el('div', { class: 'list-row' },
     el('h2', {}, 'Exercise library'),
-    el('button', { class: 'btn small', onclick: () => editExercise(null, () => render()) }, '+ New'),
+    el('div', { class: 'row-actions' },
+      el('button', { class: 'btn small secondary', onclick: () => importExercisesModal() }, 'Import'),
+      el('button', { class: 'btn small secondary', onclick: () => exportLibrary() }, 'Export'),
+      el('button', { class: 'btn small', onclick: () => editExercise(null, () => render()) }, '+ New'),
+    ),
   ));
   if (!lib.length) {
     root.appendChild(emptyState('No exercises yet. They’re also created automatically when importing plans.'));
@@ -79,6 +83,96 @@ function renderExerciseList() {
 
 function logCountFor(exerciseId) {
   return store.get('logs').filter((l) => l.exerciseId === exerciseId).length;
+}
+
+// ---------- Library import / export ----------
+
+// Whole library as a schema-shaped exerciseLibrary map — definitions only,
+// no log history. Round-trips through the Import button below.
+function exportLibrary() {
+  const lib = store.get('exercises');
+  if (!lib.length) { toast('Library is empty — nothing to export', 'error'); return; }
+  const exerciseLibrary = {};
+  for (const ex of [...lib].sort((a, b) => a.name.localeCompare(b.name))) {
+    let key = slug(ex.name);
+    while (exerciseLibrary[key]) key += '_2';
+    exerciseLibrary[key] = exerciseDef(ex);
+  }
+  downloadJson('exercise-library.json', {
+    format: 'fitness-tracker-exercise-library',
+    formatVersion: 2,
+    exerciseLibrary,
+  });
+  toast(`Exported ${lib.length} exercise${lib.length === 1 ? '' : 's'}`);
+}
+
+// Accepts: a full v2 plan file (uses its exerciseLibrary), a bare
+// exerciseLibrary map, an array of definitions, or a single definition.
+function extractExerciseDefs(data) {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    if (data.exerciseLibrary && typeof data.exerciseLibrary === 'object') {
+      return Object.values(data.exerciseLibrary);
+    }
+    if (typeof data.name === 'string') return [data];
+    const vals = Object.values(data);
+    if (vals.length && vals.every((v) => v && typeof v === 'object' && typeof v.name === 'string')) {
+      return vals;
+    }
+  }
+  throw new Error('Expected an exerciseLibrary map, an exercise object, or an array of them');
+}
+
+function importExercisesModal() {
+  const textarea = el('textarea', {
+    placeholder: 'Paste exercise JSON here, or pick a file below…',
+    style: 'min-height:140px;font-family:monospace;font-size:0.8rem',
+  });
+  const fileInput = el('input', {
+    type: 'file',
+    accept: '.json,application/json',
+    onchange: () => {
+      const f = fileInput.files?.[0];
+      if (!f) return;
+      f.text().then((t) => { textarea.value = t; }).catch(() => toast('Could not read file', 'error'));
+    },
+  });
+  openModal('Import exercises', el('div', {},
+    el('div', { class: 'field' }, el('label', {}, 'Exercise JSON'), textarea),
+    el('div', { class: 'field' }, el('label', {}, 'Or choose a file'), fileInput),
+    el('p', { class: 'muted' },
+      'Accepts an exerciseLibrary map (as in plan files), a whole plan file, a single exercise, ',
+      'or an array of exercises. Matched by name; existing entries gain any missing detail fields, ',
+      'and your own edits are never overwritten.'),
+  ), [
+    { label: 'Cancel', class: 'btn secondary', onClick: () => {} },
+    {
+      label: 'Import',
+      class: 'btn',
+      onClick: () => {
+        let data;
+        try {
+          data = JSON.parse(textarea.value);
+        } catch {
+          toast('That isn’t valid JSON', 'error');
+          return false;
+        }
+        try {
+          const defs = extractExerciseDefs(data);
+          const lib = libraryUpserter();
+          for (const def of defs) lib.resolve(def);
+          lib.commit();
+          const { created, enriched } = lib.stats;
+          if (!created && !enriched) toast('Nothing new — all exercises already in the library');
+          else toast(`Imported: ${created} new${enriched ? `, ${enriched} updated` : ''}`);
+          render();
+        } catch (e) {
+          toast(e.message, 'error');
+          return false;
+        }
+      },
+    },
+  ]);
 }
 
 // ---------- Exercise detail ----------

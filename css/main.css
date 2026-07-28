@@ -291,6 +291,8 @@ label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-botto
 .chart-svg .tick-label { fill: var(--text-dim); font-size: 10px; }
 .chart-svg .series-line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .chart-svg .series-dot { fill: var(--accent); }
+.chart-svg .ref-line { stroke: var(--ok); stroke-width: 1.5; stroke-dasharray: 6 4; }
+.chart-svg .ref-label { fill: var(--ok); font-weight: 600; }
 
 /* ---------- Calendar ---------- */
 .cal-header {

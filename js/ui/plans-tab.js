@@ -597,7 +597,7 @@ export function editExercise(ex, onSaved, prefillName = '') {
 
 // ---------- Import / export (fitness-tracker-plan v2 schema) ----------
 
-const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'exercise';
+export const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'exercise';
 
 // Drop empty optional fields so exported files stay tidy.
 function prune(obj) {
@@ -609,6 +609,28 @@ function prune(obj) {
   return out;
 }
 
+// Serialize one library record as a v2-schema exercise definition.
+export function exerciseDef(ex) {
+  const def = prune({
+    name: ex?.name ?? 'Unknown exercise',
+    shortName: ex?.shortName,
+    category: sanitizeCategory(ex?.category),
+    modality: ex?.modality,
+    measurementType: sanitizeMeasurement(ex?.measurementType),
+    perSide: ex?.perSide || undefined,
+    equipment: ex?.equipment,
+    primaryTargets: ex?.primaryTargets,
+    cues: ex?.cues,
+    whyItsHere: ex?.whyItsHere,
+    safetyNotes: ex?.safetyNotes,
+    variants: ex?.variants,
+    progressionRule: ex?.progressionRule,
+    videoSearchTerm: ex?.videoSearchTerm,
+  });
+  def.description = ex?.description ?? ''; // required by schema
+  return def;
+}
+
 export function serializePlan(plan) {
   const lib = new Map(store.get('exercises').map((e) => [e.id, e]));
   const idToKey = new Map();
@@ -618,23 +640,7 @@ export function serializePlan(plan) {
     const ex = lib.get(exerciseId);
     let key = slug(ex?.name ?? 'exercise');
     while (exerciseLibrary[key]) key += '_2';
-    exerciseLibrary[key] = prune({
-      name: ex?.name ?? 'Unknown exercise',
-      shortName: ex?.shortName,
-      category: sanitizeCategory(ex?.category),
-      modality: ex?.modality,
-      measurementType: sanitizeMeasurement(ex?.measurementType),
-      perSide: ex?.perSide || undefined,
-      equipment: ex?.equipment,
-      primaryTargets: ex?.primaryTargets,
-      cues: ex?.cues,
-      whyItsHere: ex?.whyItsHere,
-      safetyNotes: ex?.safetyNotes,
-      variants: ex?.variants,
-      progressionRule: ex?.progressionRule,
-      videoSearchTerm: ex?.videoSearchTerm,
-    });
-    exerciseLibrary[key].description = ex?.description ?? ''; // required by schema
+    exerciseLibrary[key] = exerciseDef(ex);
     idToKey.set(exerciseId, key);
     return key;
   };
@@ -705,15 +711,18 @@ export function importPlan(data, startDate) {
   throw new Error('Unrecognized plan format — expected fitness-tracker-plan v1 or v2');
 }
 
-function libraryUpserter() {
+export function libraryUpserter() {
   const library = store.get('exercises').slice();
   const byName = new Map(library.map((e) => [e.name.toLowerCase(), e]));
   let changed = false;
+  const stats = { created: 0, enriched: 0 };
   return {
+    stats,
     // def: v2 exercise definition (or minimal {name,...}). Returns record id.
     resolve(def) {
       const name = (def.name ?? '').trim() || 'Exercise';
       let rec = byName.get(name.toLowerCase());
+      const wasNew = !rec;
       if (!rec) {
         rec = {
           ...makeExercise({ name }),
@@ -724,15 +733,18 @@ function libraryUpserter() {
         library.push(rec);
         byName.set(name.toLowerCase(), rec);
         changed = true;
+        stats.created++;
       }
       // Enrich empty fields from the richer imported definition — user edits win.
+      let enriched = false;
       for (const k of ['shortName', 'description', 'whyItsHere', 'progressionRule', 'videoSearchTerm']) {
-        if (def[k] && !rec[k]) { rec[k] = def[k]; changed = true; }
+        if (def[k] && !rec[k]) { rec[k] = def[k]; changed = true; enriched = true; }
       }
       for (const k of ['cues', 'safetyNotes', 'variants', 'equipment', 'primaryTargets']) {
-        if (def[k]?.length && !rec[k]?.length) { rec[k] = def[k]; changed = true; }
+        if (def[k]?.length && !rec[k]?.length) { rec[k] = def[k]; changed = true; enriched = true; }
       }
-      if (def.perSide && !rec.perSide) { rec.perSide = true; changed = true; }
+      if (def.perSide && !rec.perSide) { rec.perSide = true; changed = true; enriched = true; }
+      if (enriched && !wasNew) stats.enriched++;
       return rec.id;
     },
     commit() {

@@ -17,7 +17,10 @@ whichever branch is selected in the repo's Pages settings.)*
   multiple concurrent plans. Plans import/export as portable
   `fitness-tracker-plan` v2 JSON (see below).
 - **Fitness Library** — the shared exercise library (descriptions, cues,
-  safety notes, difficulty variants, per-set RWI history) plus **Goals**:
+  safety notes, difficulty variants, per-set RWI history), with import
+  (an `exerciseLibrary` map, a whole plan file, a single exercise, or an
+  array) and whole-library export (definitions only, no history), plus
+  **Goals**:
   bodyweight targets, run-time goals (1 mile / 5k / 10k / custom), and
   exercise goals, each with live progress against your logs.
   RWI (Relative Work Index) = (reps or seconds per set) × (goal weight ÷

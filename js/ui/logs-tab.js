@@ -541,6 +541,7 @@ function renderMetrics() {
     el('h3', {}, 'Body weight'),
     el('button', { class: 'btn small', onclick: () => logBodyMetric() }, '+ Log metrics'),
   ));
+  const weightGoal = store.get('goals').find((g) => g.type === 'bodyweight' && g.targetWeight != null);
   for (const m of BODY_METRICS) {
     const res = resolveMetric(m);
     const points = datePoints(
@@ -550,10 +551,14 @@ function renderMetrics() {
     );
     if (m.id !== 'weight' && points.length < 2) continue;
     if (m.id !== 'weight') root.appendChild(el('h3', {}, m.label));
+    const refLine = m.id === 'weight' && weightGoal
+      ? { value: res.toInput(weightGoal.targetWeight), label: `goal ${res.toInput(weightGoal.targetWeight)} ${res.unit}` }
+      : null;
     root.appendChild(lineChart({
       points,
       yLabel: res.unit,
       yFormat: (v) => (res.step >= 1 ? String(Math.round(v)) : v.toFixed(1)),
+      refLine,
     }));
   }
 

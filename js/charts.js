@@ -11,7 +11,9 @@ function s(tag, attrs = {}) {
   return n;
 }
 
-export function lineChart({ points, width = 640, height = 220, yLabel = '', yFormat = (v) => v, invertY = false }) {
+// refLine (optional): { value, label } draws a horizontal dashed goal line
+// at that y-value; the y-domain is widened to keep it in view.
+export function lineChart({ points, width = 640, height = 220, yLabel = '', yFormat = (v) => v, invertY = false, refLine = null }) {
   const wrap = document.createElement('div');
   wrap.className = 'chart-wrap';
   const svg = s('svg', { viewBox: `0 0 ${width} ${height}`, class: 'chart-svg' });
@@ -29,6 +31,7 @@ export function lineChart({ points, width = 640, height = 220, yLabel = '', yFor
 
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
+  if (refLine?.value != null) ys.push(refLine.value);
   const xMin = Math.min(...xs);
   const xMax = Math.max(...xs);
   let yMin = Math.min(...ys);
@@ -67,6 +70,21 @@ export function lineChart({ points, width = 640, height = 220, yLabel = '', yFor
     svg.appendChild(label);
   }
   svg.appendChild(s('line', { x1: pad.l, x2: width - pad.r, y1: height - pad.b, y2: height - pad.b, class: 'axis-line' }));
+
+  if (refLine?.value != null) {
+    const y = Y(refLine.value);
+    svg.appendChild(s('line', { x1: pad.l, x2: width - pad.r, y1: y, y2: y, class: 'ref-line' }));
+    if (refLine.label) {
+      const t = s('text', {
+        x: width - pad.r - 4,
+        y: y - 5,
+        'text-anchor': 'end',
+        class: 'tick-label ref-label',
+      });
+      t.textContent = refLine.label;
+      svg.appendChild(t);
+    }
+  }
 
   const d = points.map((p, i) => `${i ? 'L' : 'M'}${X(p.x).toFixed(1)},${Y(p.y).toFixed(1)}`).join('');
   svg.appendChild(s('path', { d, class: 'series-line' }));
