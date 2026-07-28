@@ -11,12 +11,64 @@
 
 import * as cache from './cache.js';
 import { makeClient, hasToken, ConflictError, NotFoundError, AuthError } from './github-api.js';
+import { encryptJson, decryptJson, isEnvelope } from '../crypto.js';
 import { DATA_FILES, STRAVA_DIR, REPO } from '../config.js';
 
 const client = makeClient(REPO);
 const listeners = new Set();
 let status = 'local'; // 'local' | 'ok' | 'pending' | 'error'
 let lastError = null;
+
+// ---------- encryption (optional password) ----------
+// When a password is set, these repo files are written as AES-GCM envelopes
+// (see crypto.js): logs, body metrics, and all Strava GPS shards. Plans,
+// exercises, and match links stay plaintext. The local cache is always
+// plaintext — the device is trusted (same model as the PAT).
+
+const PW_KEY = 'ft.enc.pw';
+const lockedPaths = new Set(); // envelopes we couldn't decrypt (no/wrong password)
+
+function password() {
+  return localStorage.getItem(PW_KEY) || '';
+}
+
+export function setPassword(pw) {
+  if (pw) localStorage.setItem(PW_KEY, pw);
+  else localStorage.removeItem(PW_KEY);
+}
+
+export function encryption() {
+  return { enabled: !!password(), locked: lockedPaths.size > 0 };
+}
+
+function isEncryptedPath(path) {
+  return path === DATA_FILES.logs || path === DATA_FILES.metrics || path.startsWith(`${STRAVA_DIR}/activities-`);
+}
+
+// Repo-file (de)serialization boundary — the ONLY place ciphertext exists.
+export async function serializeFile(path, data) {
+  const body = password() && isEncryptedPath(path) ? await encryptJson(data, password()) : data;
+  return JSON.stringify(body, null, 2) + '\n';
+}
+
+// -> { data } on success, { locked: true } when an envelope can't be opened.
+export async function deserializeFile(path, parsed) {
+  if (!isEnvelope(parsed)) {
+    lockedPaths.delete(path);
+    return { data: parsed };
+  }
+  if (password()) {
+    try {
+      const data = await decryptJson(parsed, password());
+      lockedPaths.delete(path);
+      return { data };
+    } catch {
+      // fall through to locked
+    }
+  }
+  lockedPaths.add(path);
+  return { locked: true };
+}
 
 function emit(event) {
   for (const fn of listeners) fn(event);
@@ -85,7 +137,7 @@ async function push(path, collection) {
   setStatus('pending');
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const content = JSON.stringify(cache.getData(path), null, 2) + '\n';
+      const content = await serializeFile(path, cache.getData(path));
       try {
         const sha = await client.putFile(path, content, cache.getSha(path), `Update ${path}`);
         cache.setSha(path, sha);
@@ -109,7 +161,11 @@ async function mergeRemote(path, collection) {
   let sha = null;
   try {
     const f = await client.getFile(path);
-    remote = JSON.parse(f.content);
+    const res = await deserializeFile(path, JSON.parse(f.content));
+    // Locked remote = encrypted under a password we don't have; merging is
+    // impossible and overwriting would destroy data. Stay dirty and queued.
+    if (res.locked) throw new Error(`Cannot merge ${path}: encrypted with an unknown password`);
+    remote = res.data;
     sha = f.sha;
   } catch (e) {
     if (!(e instanceof NotFoundError)) throw e;
@@ -141,7 +197,13 @@ export async function refresh() {
       try {
         const { content, sha } = await client.getFile(path);
         if (sha !== cache.getSha(path)) {
-          cache.setData(path, JSON.parse(content));
+          const res = await deserializeFile(path, JSON.parse(content));
+          if (res.locked) {
+            // Keep the old cache and old sha so we retry once unlocked.
+            emit({ type: 'sync-status', status, error: lastError });
+            continue;
+          }
+          cache.setData(path, res.data);
           cache.setSha(path, sha);
           emit({ type: 'changed', collection });
         }
@@ -166,7 +228,12 @@ export async function refreshStrava() {
     index.push(s.path);
     if (s.sha !== cache.getSha(s.path)) {
       const { content, sha } = await client.getFile(s.path);
-      cache.setData(s.path, JSON.parse(content));
+      const res = await deserializeFile(s.path, JSON.parse(content));
+      if (res.locked) {
+        emit({ type: 'sync-status', status, error: lastError });
+        continue;
+      }
+      cache.setData(s.path, res.data);
       cache.setSha(s.path, sha);
       changed = true;
     }
@@ -174,6 +241,32 @@ export async function refreshStrava() {
   cache.setData('ft.strava.index', index);
   if (changed) emit({ type: 'changed', collection: 'strava' });
   return changed;
+}
+
+// Re-write every encryptable repo file with the current password setting.
+// Used when enabling/disabling encryption or changing the password. The
+// Strava shards are normally Actions-owned; this one-time migration write is
+// the documented exception (the sync script's id-dedupe makes races benign).
+export async function rewriteEncryptedFiles() {
+  if (!hasToken()) return; // local mode: nothing in the repo to rewrite
+  for (const collection of ['logs', 'metrics']) {
+    const path = DATA_FILES[collection];
+    cache.markDirty(path);
+    await push(path, collection);
+  }
+  const shardPaths = cache.getData('ft.strava.index') ?? [];
+  for (const path of shardPaths) {
+    const data = cache.getData(path);
+    if (!Array.isArray(data)) continue; // never had it decrypted — skip
+    const content = await serializeFile(path, data);
+    try {
+      const sha = await client.putFile(path, content, cache.getSha(path), `Update ${path}`);
+      cache.setSha(path, sha);
+    } catch (e) {
+      if (!(e instanceof ConflictError)) throw e;
+      // Sync workflow wrote meanwhile; next refresh + sync run reconverge.
+    }
+  }
 }
 
 // ---------- lifecycle ----------

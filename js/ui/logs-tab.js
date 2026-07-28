@@ -18,14 +18,16 @@ import { el, openModal, confirmDialog, toast, emptyState } from './components.js
 import { pickExercise, targetSummary } from './plans-tab.js';
 
 let root = null;
+let ctx = null;
 let unsub = null;
 let sub = 'today'; // 'today' | 'history' | 'metrics' | 'heatmap'
 let histFilter = { from: addDays(todayStr(), -30), to: todayStr(), planId: '' };
 let adherenceDays = 30;
 let heatmapMod = null;
 
-export function mount(elRoot) {
+export function mount(elRoot, appCtx) {
   root = elRoot;
+  ctx = appCtx;
   unsub = store.onChange((e) => {
     if (e.type === 'changed') render();
   });
@@ -66,6 +68,17 @@ function render() {
     segs.map(([id, label]) =>
       el('button', { class: sub === id ? 'active' : '', onclick: () => { sub = id; render(); } }, label)),
   ));
+  if (store.encryption().locked) {
+    root.appendChild(el('div', { class: 'card' },
+      el('div', { class: 'list-row', style: 'border:none;padding:0' },
+        el('div', { class: 'row-main' },
+          el('div', { class: 'row-title' }, '🔒 Some synced data is encrypted'),
+          el('div', { class: 'row-sub' }, 'Enter your password in Settings to unlock it on this device.'),
+        ),
+        el('button', { class: 'btn small', onclick: () => ctx?.openSettings?.() }, 'Unlock'),
+      ),
+    ));
+  }
   if (sub === 'today') renderToday();
   else if (sub === 'history') renderHistory();
   else if (sub === 'metrics') renderMetrics();

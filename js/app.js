@@ -37,7 +37,10 @@ function renderBadge() {
   const { status } = store.syncStatus();
   badge.hidden = false;
   badge.className = 'sync-badge';
-  if (status === 'local') {
+  if (store.encryption().locked) {
+    badge.textContent = '🔒 locked';
+    badge.classList.add('error');
+  } else if (status === 'local') {
     badge.textContent = 'local only';
   } else if (status === 'pending') {
     badge.textContent = 'pending sync';
@@ -49,6 +52,70 @@ function renderBadge() {
     badge.textContent = 'synced';
     badge.classList.add('ok');
   }
+}
+
+// Optional password encrypting logs, body metrics, and GPS shards in the
+// repo (AES-GCM, see js/crypto.js). Enable/change re-writes those files;
+// disabling decrypts them back to plaintext.
+function privacySection() {
+  const { enabled, locked } = store.encryption();
+  const statusLine = el('p', { class: 'muted' },
+    locked
+      ? 'Some synced files are encrypted and the password is missing or wrong — enter it below to unlock.'
+      : enabled
+        ? 'Encryption is ON — logs, body metrics, and GPS data are stored encrypted in the repo. '
+          + 'Remember to set the same password as the ENCRYPTION_PASSWORD Actions secret for Strava sync.'
+        : 'Optional: set a password to encrypt logs, body metrics, and GPS data in the repo '
+          + '(useful if the repo is public). Plans and the exercise library stay readable.',
+  );
+  const pwInput = el('input', { type: 'password', placeholder: enabled ? 'new password…' : 'password…', autocomplete: 'new-password' });
+
+  const apply = async () => {
+    const pw = pwInput.value.trim();
+    if (!pw) { toast('Enter a password first', 'error'); return; }
+    setBusy(true);
+    store.setPassword(pw);
+    await store.refresh(); // decrypt anything currently locked
+    if (store.encryption().locked) {
+      toast('That password doesn’t unlock the synced files', 'error');
+    } else {
+      await store.rewriteEncryptedFiles();
+      toast(enabled ? 'Password updated' : 'Encryption enabled');
+      tabbar.refresh();
+    }
+    setBusy(false);
+    renderBadge();
+  };
+  const disable = async () => {
+    if (store.encryption().locked) {
+      toast('Unlock with the current password before disabling', 'error');
+      return;
+    }
+    setBusy(true);
+    store.setPassword('');
+    await store.rewriteEncryptedFiles();
+    toast('Encryption disabled — files stored as plaintext again');
+    setBusy(false);
+    renderBadge();
+  };
+  const applyBtn = el('button', { class: 'btn secondary', onclick: apply },
+    locked ? 'Unlock' : enabled ? 'Change password' : 'Enable encryption');
+  const disableBtn = enabled ? el('button', { class: 'btn secondary', onclick: disable }, 'Disable') : null;
+  const setBusy = (b) => {
+    applyBtn.disabled = b;
+    if (disableBtn) disableBtn.disabled = b;
+  };
+
+  return el('div', {},
+    el('h3', {}, 'Privacy'),
+    statusLine,
+    el('div', { class: 'field' }, el('label', {}, 'Encryption password'), pwInput),
+    el('div', { class: 'field-row' }, applyBtn, disableBtn),
+    el('p', { class: 'muted' },
+      '⚠ There is no recovery: a lost password means the encrypted data can’t be read. ',
+      'Files committed before enabling encryption remain readable in git history.',
+    ),
+  );
 }
 
 function openSettings() {
@@ -110,6 +177,7 @@ function openSettings() {
       'The token stays in this browser (localStorage) and is only sent to api.github.com. ',
       'Heads-up: if the repo is public, everything synced to it — including GPS routes — is public too.',
     ),
+    privacySection(),
     el('h3', {}, 'Plan templates'),
     el('button', {
       class: 'btn secondary',

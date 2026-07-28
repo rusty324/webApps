@@ -12,12 +12,13 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { encryptJson, decryptJson, isEnvelope, DecryptError } from '../js/crypto.js';
 
 const STRAVA_DIR = join(process.cwd(), 'data', 'strava');
 const STATE_PATH = join(STRAVA_DIR, 'state.json');
 const OVERLAP_SEC = 7 * 86400;
 
-const { STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN } = process.env;
+const { STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN, ENCRYPTION_PASSWORD } = process.env;
 if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET || !STRAVA_REFRESH_TOKEN) {
   console.error('Missing STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET / STRAVA_REFRESH_TOKEN');
   process.exit(1);
@@ -29,6 +30,32 @@ async function readJson(path, fallback) {
   } catch {
     return fallback;
   }
+}
+
+// Shards may be encrypted (the app's optional password). Never write a
+// plaintext shard next to encrypted ones — fail loudly instead.
+async function readShard(path) {
+  const parsed = await readJson(path, []);
+  if (!isEnvelope(parsed)) return parsed;
+  if (!ENCRYPTION_PASSWORD) {
+    console.error(`${path} is encrypted but the ENCRYPTION_PASSWORD secret is not set.`);
+    console.error('Add the same password used in the app as a repo Actions secret named ENCRYPTION_PASSWORD.');
+    process.exit(1);
+  }
+  try {
+    return await decryptJson(parsed, ENCRYPTION_PASSWORD);
+  } catch (e) {
+    if (e instanceof DecryptError) {
+      console.error(`${path}: ENCRYPTION_PASSWORD does not match the password the file was encrypted with.`);
+      process.exit(1);
+    }
+    throw e;
+  }
+}
+
+async function writeShard(path, entries) {
+  const body = ENCRYPTION_PASSWORD ? await encryptJson(entries, ENCRYPTION_PASSWORD) : entries;
+  await writeFile(path, JSON.stringify(body, null, 2) + '\n');
 }
 
 async function getAccessToken() {
@@ -108,14 +135,14 @@ for (const a of activities) {
 let added = 0;
 for (const [month, entries] of byMonth) {
   const shardPath = join(STRAVA_DIR, `activities-${month}.json`);
-  const existing = await readJson(shardPath, []);
+  const existing = await readShard(shardPath);
   const byId = new Map(existing.map((e) => [e.stravaId, e]));
   for (const e of entries) {
     if (!byId.has(e.stravaId)) added++;
     byId.set(e.stravaId, e); // refresh existing too (name edits, late HR data)
   }
   const merged = [...byId.values()].sort((x, y) => (x.date < y.date ? -1 : 1));
-  await writeFile(shardPath, JSON.stringify(merged, null, 2) + '\n');
+  await writeShard(shardPath, merged);
   console.log(`Wrote ${shardPath} (${merged.length} entries)`);
 }
 

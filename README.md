@@ -84,6 +84,25 @@ Actions tab / the in-app button) and commits new activities to
 `data/strava/activities-YYYY-MM.json`. Strava credentials never reach the
 browser — the site only reads the synced JSON.
 
+## Encryption (optional)
+
+If the repo is public (or you just want data at rest protected), set an
+encryption password in ⚙ Settings → Privacy. From then on **logs, body
+metrics, and Strava GPS shards** are committed as AES-256-GCM envelopes
+(key derived from your password with PBKDF2, 310k iterations) instead of
+readable JSON. Plans, the exercise library, and match links stay plaintext.
+
+- For Strava sync to keep working, add the same password as a repo Actions
+  secret named `ENCRYPTION_PASSWORD`. If the secret is missing while shards
+  are encrypted, the sync fails loudly rather than writing mixed plaintext.
+- The password is remembered in this browser's localStorage (same trust
+  model as the PAT). On a new device, enter it once in Settings to unlock.
+- **No recovery**: a lost password makes the encrypted data unreadable.
+- Files committed *before* enabling encryption remain readable in git
+  history. If that matters, rewrite history or start the data files fresh.
+- Disabling encryption in Settings decrypts and re-commits everything as
+  plaintext.
+
 ## Plan templates (import / export)
 
 **Export** (on a plan's detail page) downloads the plan as a portable JSON
