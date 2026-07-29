@@ -15,6 +15,7 @@ import {
   distanceToInput, distanceFromInput, distanceUnit,
 } from '../units.js';
 import { el, openModal, confirmDialog, toast, emptyState, downloadJson } from './components.js';
+import { loadManifest, loadPreset } from '../presets.js';
 import { editExercise, pickExercise, targetSummary, libraryUpserter, exerciseDef, slug } from './plans-tab.js';
 
 let root = null;
@@ -145,8 +146,51 @@ function importExercisesModal() {
       f.text().then((t) => { textarea.value = t; }).catch(() => toast('Could not read file', 'error'));
     },
   });
-  openModal('Import exercises', el('div', {},
-    el('div', { class: 'field' }, el('label', {}, 'Exercise JSON'), textarea),
+  // Starter packs bundled with the site; tapping one imports it directly.
+  const packList = el('div', {}, el('p', { class: 'muted' }, 'Loading starter packs…'));
+  let modal;
+  loadManifest().then((manifest) => {
+    packList.innerHTML = '';
+    for (const pack of manifest.exercisePacks ?? []) {
+      packList.appendChild(el('div', { class: 'list-row tappable', onclick: async () => {
+        try {
+          const data = await loadPreset(pack.file);
+          applyImport(data);
+          modal.close();
+        } catch (e) {
+          toast(e.message, 'error');
+        }
+      } },
+        el('div', { class: 'row-main' },
+          el('div', { class: 'row-title' }, pack.name),
+          pack.description && el('div', { class: 'row-sub' }, pack.description),
+        ),
+        el('span', { class: 'pill' }, `${pack.count}`),
+      ));
+    }
+    if (!manifest.exercisePacks?.length) packList.appendChild(el('p', { class: 'muted' }, 'No starter packs available.'));
+  }).catch(() => {
+    packList.innerHTML = '';
+    packList.appendChild(el('p', { class: 'muted' }, 'Starter packs unavailable offline.'));
+  });
+
+  // Shared by the preset rows and the paste/file route.
+  function applyImport(data) {
+    const defs = extractExerciseDefs(data);
+    const lib = libraryUpserter();
+    for (const def of defs) lib.resolve(def);
+    lib.commit();
+    const { created, enriched } = lib.stats;
+    if (!created && !enriched) toast('Nothing new — all exercises already in the library');
+    else toast(`Imported: ${created} new${enriched ? `, ${enriched} updated` : ''}`);
+    render();
+  }
+
+  modal = openModal('Import exercises', el('div', {},
+    el('h3', {}, 'Starter packs'),
+    packList,
+    el('h3', {}, 'Or paste your own'),
+    el('div', { class: 'field' }, textarea),
     el('div', { class: 'field' }, el('label', {}, 'Or choose a file'), fileInput),
     el('p', { class: 'muted' },
       'Accepts an exerciseLibrary map (as in plan files), a whole plan file, a single exercise, ',
@@ -166,14 +210,7 @@ function importExercisesModal() {
           return false;
         }
         try {
-          const defs = extractExerciseDefs(data);
-          const lib = libraryUpserter();
-          for (const def of defs) lib.resolve(def);
-          lib.commit();
-          const { created, enriched } = lib.stats;
-          if (!created && !enriched) toast('Nothing new — all exercises already in the library');
-          else toast(`Imported: ${created} new${enriched ? `, ${enriched} updated` : ''}`);
-          render();
+          applyImport(data);
         } catch (e) {
           toast(e.message, 'error');
           return false;

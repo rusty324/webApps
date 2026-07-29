@@ -116,6 +116,31 @@ readable JSON. Plans, the exercise library, and match links stay plaintext.
 - Disabling encryption in Settings decrypts and re-commits everything as
   plaintext.
 
+## Starter content (`presets/`)
+
+The site ships with ready-made plans and exercise packs in `presets/`. They
+load with a plain relative fetch from the same branch — no token, no GitHub
+API, no rate limit — so they work in local-only mode and offline once cached.
+
+- **Plans tab → Import → Starter plans** — pick a start date, tap a plan.
+- **Fitness Library → Import → Starter packs** — tap a pack to merge it into
+  your library (matched by name, so re-importing is a no-op).
+
+Bundled today:
+
+| Preset | What |
+|---|---|
+| Couch to 10K — 26-Week Conservative Build | 26 weeks, 78 sessions, deloads every 4th week, lower-leg strength in every session |
+| Example Plan (edit me) | One week showing every target kind — the best base for writing your own |
+| Running & Calisthenics | 26 exercises: running warm-ups, shin/calf prevention work, and a full skill ladder |
+| Barbell Basics | Squat, deadlift, bench, overhead press, row, RDL |
+| Dumbbell Essentials | Squat, hinge, push, pull, press, lunge with dumbbells and a bench |
+| Cardio & Cross-Training | Bike, swim, row, incline walk, elliptical, jump rope |
+
+**Adding your own takes no code**: drop a file in `presets/plans/` or
+`presets/exercises/` and add an entry to `presets/index.json` (`name`,
+`description`, `file`, plus optional `weeks`/`sessions`/`level` or `count`).
+
 ## Plan templates (import / export)
 
 Plans import and export in the **`fitness-tracker-plan` v2 schema**: a

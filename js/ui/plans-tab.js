@@ -17,6 +17,7 @@ import {
   distanceUnit, distanceToInput, distanceFromInput, paceToInput, paceFromInput,
 } from '../units.js';
 import { el, openModal, confirmDialog, toast, emptyState, downloadJson } from './components.js';
+import { loadManifest, loadPreset } from '../presets.js';
 
 let root = null;
 let unsub = null;
@@ -868,10 +869,48 @@ function importPlanModal() {
     },
   });
   const dateInput = el('input', { type: 'date', value: todayStr() });
-  openModal('Import plan', el('div', {},
-    el('div', { class: 'field' }, el('label', {}, 'Plan JSON'), textarea),
-    el('div', { class: 'field' }, el('label', {}, 'Or choose a file'), fileInput),
+
+  // Starter plans bundled with the site; tapping one imports it directly
+  // using the start date above, without round-tripping through the textarea.
+  const presetList = el('div', {}, el('p', { class: 'muted' }, 'Loading starter plans…'));
+  let modal;
+  loadManifest().then((manifest) => {
+    presetList.innerHTML = '';
+    for (const p of manifest.plans ?? []) {
+      presetList.appendChild(el('div', { class: 'list-row tappable', onclick: async () => {
+        try {
+          const data = await loadPreset(p.file);
+          const plan = importPlan(data, dateInput.value || todayStr());
+          modal.close();
+          toast(`Imported “${plan.name}”`);
+          view = { name: 'plan', planId: plan.id };
+          render();
+        } catch (e) {
+          toast(e.message, 'error');
+        }
+      } },
+        el('div', { class: 'row-main' },
+          el('div', { class: 'row-title' }, p.name),
+          el('div', { class: 'row-sub' },
+            [p.weeks && `${p.weeks} week${p.weeks === 1 ? '' : 's'}`,
+              p.sessions && `${p.sessions} sessions`, p.level].filter(Boolean).join(' · ')),
+          p.description && el('div', { class: 'row-sub' }, p.description),
+        ),
+      ));
+    }
+    if (!manifest.plans?.length) presetList.appendChild(el('p', { class: 'muted' }, 'No starter plans available.'));
+  }).catch(() => {
+    presetList.innerHTML = '';
+    presetList.appendChild(el('p', { class: 'muted' }, 'Starter plans unavailable offline.'));
+  });
+
+  modal = openModal('Import plan', el('div', {},
     el('div', { class: 'field' }, el('label', {}, 'Start date (day 0 of the plan)'), dateInput),
+    el('h3', {}, 'Starter plans'),
+    presetList,
+    el('h3', {}, 'Or paste your own'),
+    el('div', { class: 'field' }, textarea),
+    el('div', { class: 'field' }, el('label', {}, 'Or choose a file'), fileInput),
     el('p', { class: 'muted' },
       'Accepts fitness-tracker-plan v2 files (and older v1 templates). ',
       'Exercises are matched to your library by name; missing ones are created with their full descriptions.'),
