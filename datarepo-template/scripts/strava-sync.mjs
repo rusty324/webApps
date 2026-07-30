@@ -12,7 +12,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { encryptJson, decryptJson, isEnvelope, DecryptError } from '../js/crypto.js';
+import { encryptJson, decryptJson, isEnvelope, DecryptError } from './crypto.js';
 
 const STRAVA_DIR = join(process.cwd(), 'data', 'strava');
 const STATE_PATH = join(STRAVA_DIR, 'state.json');

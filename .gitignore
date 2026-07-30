@@ -1,3 +1,7 @@
 # No build step on this branch — vendor/ holds committed third-party libs.
 node_modules/
 .DS_Store
+
+# Personal data belongs in the separate private data repo, never here.
+# See README → "Where your data lives".
+/data/

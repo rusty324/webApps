@@ -13,9 +13,49 @@ import * as cache from './cache.js';
 import { makeClient, hasToken, ConflictError, NotFoundError, AuthError } from './github-api.js';
 import { encryptJson, decryptJson, isEnvelope } from '../crypto.js';
 import { migratePlan, migrateExercise } from '../models.js';
-import { DATA_FILES, STRAVA_DIR, REPO } from '../config.js';
+import { DATA_FILES, STRAVA_DIR, DATA_REPO_DEFAULT } from '../config.js';
 
-const client = makeClient(REPO);
+// ---------- data repository ----------
+// Personal data lives in a separate PRIVATE repo, never the public one that
+// serves the app. It's configured at runtime so switching repos needs no
+// redeploy; the client reads this getter on every call, so a change in
+// Settings takes effect immediately.
+
+const REPO_KEY = 'ft.datarepo';
+
+export function getDataRepo() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(REPO_KEY));
+    if (stored?.owner && stored?.repo) return { branch: 'main', ...stored };
+  } catch {
+    // fall through to the default
+  }
+  return DATA_REPO_DEFAULT;
+}
+
+export function setDataRepo(cfg) {
+  if (cfg?.owner && cfg?.repo) {
+    localStorage.setItem(REPO_KEY, JSON.stringify({
+      owner: cfg.owner.trim(),
+      repo: cfg.repo.trim(),
+      branch: (cfg.branch || 'main').trim(),
+    }));
+  } else {
+    localStorage.removeItem(REPO_KEY);
+  }
+}
+
+export function hasDataRepo() {
+  const c = getDataRepo();
+  return !!(c?.owner && c?.repo);
+}
+
+// Remote sync needs both a token and a destination.
+function canSync() {
+  return hasToken() && hasDataRepo();
+}
+
+const client = makeClient(getDataRepo);
 const listeners = new Set();
 let status = 'local'; // 'local' | 'ok' | 'pending' | 'error'
 let lastError = null;
@@ -88,7 +128,7 @@ export function onChange(fn) {
 }
 
 export function syncStatus() {
-  return { status, error: lastError, connected: hasToken() };
+  return { status, error: lastError, connected: canSync() };
 }
 
 // ---------- reads ----------
@@ -137,8 +177,8 @@ export async function remove(collection, id) {
 }
 
 async function push(path, collection) {
-  if (!hasToken() || !navigator.onLine) {
-    setStatus(hasToken() ? 'pending' : 'local');
+  if (!canSync() || !navigator.onLine) {
+    setStatus(canSync() ? 'pending' : 'local');
     return;
   }
   setStatus('pending');
@@ -197,7 +237,7 @@ export async function flushQueue() {
 // ---------- background refresh ----------
 
 export async function refresh() {
-  if (!hasToken() || !navigator.onLine) return;
+  if (!canSync() || !navigator.onLine) return;
   try {
     for (const [collection, path] of Object.entries(DATA_FILES)) {
       if (cache.isDirty(path)) continue; // don't clobber unpushed local edits
@@ -250,13 +290,14 @@ export async function refreshStrava() {
   return changed;
 }
 
-// Re-write every encryptable repo file with the current password setting.
-// Used when enabling/disabling encryption or changing the password. The
-// Strava shards are normally Actions-owned; this one-time migration write is
-// the documented exception (the sync script's id-dedupe makes races benign).
-export async function rewriteEncryptedFiles() {
-  if (!hasToken()) return; // local mode: nothing in the repo to rewrite
-  for (const collection of ['logs', 'metrics', 'goals']) {
+// Re-upload cached collections to the data repo. `collections` defaults to
+// the encryptable ones, which is what enabling/disabling a password needs;
+// pass all of DATA_FILES to seed a freshly-created repo from this browser.
+// Strava shards are normally Actions-owned; these migration writes are the
+// documented exception (the sync script's id-dedupe makes races benign).
+export async function rewriteEncryptedFiles(collections = ['logs', 'metrics', 'goals']) {
+  if (!canSync()) return; // local mode, or no repo configured yet
+  for (const collection of collections) {
     const path = DATA_FILES[collection];
     cache.markDirty(path);
     await push(path, collection);
@@ -276,6 +317,16 @@ export async function rewriteEncryptedFiles() {
   }
 }
 
+// Seed a newly configured data repo with everything this browser holds.
+// Shas are cleared first so each file is created rather than sha-checked
+// against a different repo's history.
+export async function pushAllData() {
+  if (!canSync()) throw new Error('Set a data repository and a token first');
+  for (const path of Object.values(DATA_FILES)) cache.setSha(path, null);
+  for (const path of cache.getData('ft.strava.index') ?? []) cache.setSha(path, null);
+  await rewriteEncryptedFiles(Object.keys(DATA_FILES));
+}
+
 // ---------- lifecycle ----------
 
 export function init() {
@@ -287,7 +338,7 @@ export function init() {
   setInterval(() => {
     if (cache.getQueue().length) flushQueue();
   }, 30000);
-  setStatus(hasToken() ? (cache.getQueue().length ? 'pending' : 'ok') : 'local');
+  setStatus(canSync() ? (cache.getQueue().length ? 'pending' : 'ok') : 'local');
   refresh(); // fire-and-forget background load
 }
 

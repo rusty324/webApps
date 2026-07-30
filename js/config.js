@@ -9,12 +9,20 @@ export const TABS = [
 
 export const DEFAULT_TAB = 'logs';
 
-// Repo the GitHub Contents API writes to.
-export const REPO = {
+// Where the app itself is served from (public). Shown in Settings; the app
+// never writes here.
+export const APP_REPO = {
   owner: 'rusty324',
   repo: 'webApps',
   branch: 'fitnessTracker',
 };
+
+// Where personal data is stored — a SEPARATE PRIVATE repo, configured at
+// runtime in Settings and kept in localStorage. Deliberately unset by
+// default: with no data repo the app stays local-only rather than writing
+// personal data somewhere public by accident. See README → "Where your
+// data lives".
+export const DATA_REPO_DEFAULT = null;
 
 // Data files, relative to repo root. The browser owns all of these.
 // data/strava/** is owned by the Actions sync workflow and is read-only here.

@@ -1,8 +1,17 @@
-// Thin GitHub Contents API client. Auth is a fine-grained PAT scoped to this
-// single repo, kept in localStorage and never rendered back into the DOM.
+// Thin GitHub Contents API client. Auth is a fine-grained PAT scoped to the
+// single private data repo, kept in localStorage and never rendered back
+// into the DOM. The repo it targets is configured at runtime — see
+// store.js getDataRepo() and README → "Where your data lives".
 
 const API = 'https://api.github.com';
 const PAT_KEY = 'ft.pat';
+
+export class NotConfiguredError extends Error {
+  constructor() {
+    super('No data repository configured — set one in Settings');
+    this.name = 'NotConfiguredError';
+  }
+}
 
 export class ConflictError extends Error {
   constructor(path) {
@@ -61,13 +70,33 @@ function b64decode(b64) {
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
-export function makeClient(repoCfg) {
-  const base = () => `${API}/repos/${repoCfg.owner}/${repoCfg.repo}/contents`;
+// repoCfgOrGetter: either a {owner, repo, branch} object or a function
+// returning one. The getter form lets Settings retarget the data repo
+// without a reload, since every call re-reads the current config.
+export function makeClient(repoCfgOrGetter) {
+  const cfg = () => {
+    const c = typeof repoCfgOrGetter === 'function' ? repoCfgOrGetter() : repoCfgOrGetter;
+    if (!c?.owner || !c?.repo) throw new NotConfiguredError();
+    return { branch: 'main', ...c };
+  };
+  const base = () => `${API}/repos/${cfg().owner}/${cfg().repo}/contents`;
 
   return {
+    isConfigured() {
+      try {
+        cfg();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    target() {
+      const c = typeof repoCfgOrGetter === 'function' ? repoCfgOrGetter() : repoCfgOrGetter;
+      return c?.owner && c?.repo ? { branch: 'main', ...c } : null;
+    },
     // -> { content: string, sha } ; throws NotFoundError if absent
     async getFile(path) {
-      const res = await fetch(`${base()}/${path}?ref=${repoCfg.branch}`, { headers: headers() });
+      const res = await fetch(`${base()}/${path}?ref=${cfg().branch}`, { headers: headers() });
       await check(res, path);
       const json = await res.json();
       return { content: b64decode(json.content), sha: json.sha };
@@ -78,7 +107,7 @@ export function makeClient(repoCfg) {
       const body = {
         message,
         content: b64encode(content),
-        branch: repoCfg.branch,
+        branch: cfg().branch,
       };
       if (sha) body.sha = sha;
       const res = await fetch(`${base()}/${path}`, {
@@ -93,7 +122,7 @@ export function makeClient(repoCfg) {
 
     // -> [{ name, path, sha }] ; [] if the directory doesn't exist yet
     async listDir(path) {
-      const res = await fetch(`${base()}/${path}?ref=${repoCfg.branch}`, { headers: headers() });
+      const res = await fetch(`${base()}/${path}?ref=${cfg().branch}`, { headers: headers() });
       if (res.status === 404) return [];
       await check(res, path);
       const json = await res.json();
@@ -103,11 +132,11 @@ export function makeClient(repoCfg) {
     // Fire the Strava sync workflow via workflow_dispatch (PAT needs Actions:write).
     async dispatchWorkflow(workflowFile) {
       const res = await fetch(
-        `${API}/repos/${repoCfg.owner}/${repoCfg.repo}/actions/workflows/${workflowFile}/dispatches`,
+        `${API}/repos/${cfg().owner}/${cfg().repo}/actions/workflows/${workflowFile}/dispatches`,
         {
           method: 'POST',
           headers: { ...headers(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ref: repoCfg.branch }),
+          body: JSON.stringify({ ref: cfg().branch }),
         },
       );
       await check(res, workflowFile);
@@ -115,7 +144,7 @@ export function makeClient(repoCfg) {
 
     // Cheap validity probe for the settings panel.
     async validate() {
-      const res = await fetch(`${API}/repos/${repoCfg.owner}/${repoCfg.repo}`, { headers: headers() });
+      const res = await fetch(`${API}/repos/${cfg().owner}/${cfg().repo}`, { headers: headers() });
       await check(res, 'repo');
       return true;
     },

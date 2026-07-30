@@ -1,4 +1,4 @@
-import { TABS, DEFAULT_TAB, REPO, SYNC_WORKFLOW_FILE } from './config.js';
+import { TABS, DEFAULT_TAB, APP_REPO, SYNC_WORKFLOW_FILE } from './config.js';
 import { getUnits, setUnits } from './units.js';
 import * as store from './storage/store.js';
 import { getToken, setToken, hasToken } from './storage/github-api.js';
@@ -27,6 +27,82 @@ function renderBadge() {
     badge.textContent = 'synced';
     badge.classList.add('ok');
   }
+}
+
+// Personal data lives in a separate PRIVATE repo, not the public one that
+// serves this app. Configured here so it needs no redeploy, and left unset
+// by default so nothing personal is ever written somewhere public.
+function dataRepoSection() {
+  const current = store.getDataRepo();
+  const ownerInput = el('input', { value: current?.owner ?? APP_REPO.owner, placeholder: 'github-username' });
+  const repoInput = el('input', { value: current?.repo ?? '', placeholder: 'fitness-data' });
+  const branchInput = el('input', { value: current?.branch ?? 'main', placeholder: 'main' });
+
+  const status = el('p', { class: 'muted' });
+  const renderStatus = () => {
+    const c = store.getDataRepo();
+    status.textContent = c?.owner && c?.repo
+      ? `Syncing data to ${c.owner}/${c.repo} (branch ${c.branch}). This should be a private repo.`
+      : 'No data repository set — the app is running local-only, keeping everything in this browser. '
+        + 'Create a private repo and enter it here to sync.';
+  };
+  renderStatus();
+
+  const seedBtn = el('button', {
+    class: 'btn secondary',
+    onclick: async () => {
+      seedBtn.disabled = true;
+      try {
+        await store.pushAllData();
+        toast('Uploaded all local data to the data repo');
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+      seedBtn.disabled = false;
+      renderBadge();
+    },
+  }, 'Upload all local data');
+
+  return el('div', {},
+    el('h3', {}, 'Data repository'),
+    status,
+    el('div', { class: 'field-row' },
+      el('div', { class: 'field' }, el('label', {}, 'Owner'), ownerInput),
+      el('div', { class: 'field' }, el('label', {}, 'Repo'), repoInput),
+      el('div', { class: 'field' }, el('label', {}, 'Branch'), branchInput),
+    ),
+    el('div', { class: 'field-row' },
+      el('button', {
+        class: 'btn secondary',
+        onclick: async () => {
+          if (!repoInput.value.trim() || !ownerInput.value.trim()) {
+            toast('Enter an owner and a repo name', 'error');
+            return;
+          }
+          store.setDataRepo({ owner: ownerInput.value, repo: repoInput.value, branch: branchInput.value });
+          renderStatus();
+          renderBadge();
+          if (hasToken()) {
+            try {
+              await store.client.validate();
+              toast('Data repo saved — syncing');
+              await store.refresh();
+              tabbar.refresh();
+            } catch {
+              toast('Saved, but GitHub could not reach that repo — check the name and token scope', 'error');
+            }
+          } else {
+            toast('Data repo saved — add a token below to start syncing');
+          }
+        },
+      }, 'Save data repo'),
+      seedBtn,
+    ),
+    el('p', { class: 'muted' },
+      'Use “Upload all local data” once, right after connecting a new repo, to seed it from this browser. ',
+      `The app itself is served from the public ${APP_REPO.owner}/${APP_REPO.repo}, which holds no personal data.`,
+    ),
+  );
 }
 
 // Optional password encrypting logs, body metrics, and GPS shards in the
@@ -119,11 +195,12 @@ function openSettings() {
       el('div', { class: 'field' }, el('label', {}, 'Body'),
         unitSelect('length', [['cm', 'centimeters (cm)'], ['in', 'inches (in)']])),
     ),
-    el('h3', {}, 'GitHub sync'),
+    dataRepoSection(),
+    el('h3', {}, 'GitHub token'),
     el('p', { class: 'muted' },
-      `Data is saved to ${REPO.owner}/${REPO.repo} (branch ${REPO.branch}) via the GitHub API. `,
-      'Paste a fine-grained personal access token scoped to only that repo, with ',
-      'Contents read/write (plus Actions read/write for the Sync now button).',
+      'Paste a fine-grained personal access token scoped to only your private data repo, with ',
+      'Contents read/write (plus Actions read/write for the Sync now button). ',
+      'It needs no access at all to the public repo that serves this app.',
     ),
     el('div', { class: 'field' }, el('label', {}, 'Personal access token'), patInput),
     el('div', { class: 'field-row' },

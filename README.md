@@ -46,22 +46,39 @@ whichever branch is selected in the repo's Pages settings.)*
 Repo → Settings → Pages → deploy from branch `fitnessTracker`, root folder.
 The app then lives at `https://<user>.github.io/webApps/`.
 
-> ⚠️ **Privacy**: if this repo is public, everything the app saves —
-> including GPS routes of your runs — is publicly visible. Consider making
-> the repo private (branch-based Pages on private repos requires GitHub Pro).
+This repo can safely stay **public** — it contains only the app and the
+starter presets. Your personal data goes somewhere else entirely:
 
-### 2. Create a personal access token (for saving data)
+### 2. Create your private data repo
 
-GitHub → Settings → Developer settings → **Fine-grained tokens**:
+**No personal data is ever written to this public repo.** The app stores it in
+a separate private repo, which is free — only *Pages hosting* from a private
+repo needs GitHub Pro, and the app isn't hosted from there.
 
-- Repository access: **only this repo**
-- Permissions: **Contents: Read and write**, plus **Actions: Read and write**
-  if you want the in-app "Sync Strava now" button
-- Expiry: your call (you'll re-paste it when it expires)
+1. New repository → name it e.g. `fitness-data` → **Private** → tick
+   **Add a README** (this creates the default branch, which the API needs).
+2. Copy the contents of [`datarepo-template/`](datarepo-template/) into it —
+   the Strava workflow and its two scripts. That folder has its own README
+   with the details.
+3. Create a fine-grained token (GitHub → Settings → Developer settings →
+   **Fine-grained tokens**):
+   - Repository access: **only your new private data repo**
+   - Permissions: **Contents: Read and write**, plus **Actions: Read and
+     write** for the in-app "Sync Strava now" button
+   - The token needs *no* access to this public repo, so a leaked token
+     cannot modify the deployed app.
+4. In the app: ⚙ Settings → **Data repository** → enter owner, repo, and
+   branch (`main`) → **Save data repo**, then paste the token below it.
+5. Press **Upload all local data** once. The browser cache already holds
+   everything, so this seeds the new repo in a single step.
 
-Open the app, tap ⚙ Settings, paste the token. It's stored only in that
-browser's localStorage and only sent to `api.github.com`. Without a token the
-app still works in local-only mode (data stays in the browser).
+Until a data repo is set, the app runs **local-only** — fully functional, with
+everything kept in that browser. That's the deliberate default, so nothing
+personal can land somewhere public by accident.
+
+⚠️ If you previously synced real data to a public repo, deleting the files
+removes them from the current commit but **not from git history**. Rewrite the
+history, or delete and recreate the repo, if that matters to you.
 
 ⚙ Settings also has **unit preferences** — weight (kg/lb), distance (km/mi,
 which also flips pace between min/km and min/mi), and body measurements
@@ -89,25 +106,30 @@ at the UI only, so switching units never rewrites data.
    ```
 
    Copy `refresh_token` from the response.
-4. Repo → Settings → Secrets and variables → Actions → add three secrets:
-   `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `STRAVA_REFRESH_TOKEN`.
+4. In **your private data repo** (not this one) → Settings → Secrets and
+   variables → Actions → add three secrets: `STRAVA_CLIENT_ID`,
+   `STRAVA_CLIENT_SECRET`, `STRAVA_REFRESH_TOKEN`.
 
-The `Strava sync` workflow then runs every 4 hours (or on demand from the
-Actions tab / the in-app button) and commits new activities to
-`data/strava/activities-YYYY-MM.json`. Strava credentials never reach the
-browser — the site only reads the synced JSON.
+The workflow lives in the data repo because that's where it writes. It runs
+every 4 hours (or on demand from that repo's Actions tab, or the in-app button)
+and commits new activities to `data/strava/activities-YYYY-MM.json` there.
+Strava credentials never reach the browser — the site only reads the synced
+JSON through the API.
 
 ## Encryption (optional)
 
-If the repo is public (or you just want data at rest protected), set an
-encryption password in ⚙ Settings → Privacy. From then on **logs, body
-metrics, goals, and Strava GPS shards** are committed as AES-256-GCM envelopes
-(key derived from your password with PBKDF2, 310k iterations) instead of
-readable JSON. Plans, the exercise library, and match links stay plaintext.
+Now that data lives in a private repo this is defense-in-depth rather than
+load-bearing, but it's still worth enabling. Set a password in ⚙ Settings →
+Privacy and **logs, body metrics, goals, and Strava GPS shards** are committed
+as AES-256-GCM envelopes (key derived from your password with PBKDF2, 310k
+iterations) instead of readable JSON. Plans, the exercise library, and match
+links stay plaintext. It protects you if the repo is ever made public by
+mistake, shared, or exposed by a leaked token.
 
-- For Strava sync to keep working, add the same password as a repo Actions
-  secret named `ENCRYPTION_PASSWORD`. If the secret is missing while shards
-  are encrypted, the sync fails loudly rather than writing mixed plaintext.
+- For Strava sync to keep working, add the same password as an Actions secret
+  named `ENCRYPTION_PASSWORD` **in the data repo**. If the secret is missing
+  while shards are encrypted, the sync fails loudly rather than writing mixed
+  plaintext.
 - The password is remembered in this browser's localStorage (same trust
   model as the PAT). On a new device, enter it once in Settings to unlock.
 - **No recovery**: a lost password makes the encrypted data unreadable.
@@ -172,8 +194,9 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-Without a token the app runs in local-only mode, which is also how the UI is
-tested. To test the sync script locally:
+With no data repo configured the app runs in local-only mode, which is also how
+the UI is tested. To test the sync script locally, from a checkout of your data
+repo (or `datarepo-template/`):
 
 ```sh
 STRAVA_CLIENT_ID=… STRAVA_CLIENT_SECRET=… STRAVA_REFRESH_TOKEN=… \
@@ -186,13 +209,23 @@ STRAVA_CLIENT_ID=… STRAVA_CLIENT_SECRET=… STRAVA_REFRESH_TOKEN=… \
 |---|---|
 | `js/config.js` | Tab registry, Strava type→category map, data file paths |
 | `js/storage/` | GitHub Contents API client, localStorage cache, store |
-| `js/ui/` | Tab modules (plans, logs, heatmap) + shared components |
+| `js/ui/` | Tab modules (plans, logs, library, heatmap) + shared components |
 | `js/matcher.js` | Fuzzy matcher (pure functions) |
-| `scripts/strava-sync.mjs` | Actions-run Strava sync (zero dependencies) |
-| `data/` | JSON data written by the app; `data/strava/` written only by Actions |
+| `js/crypto.js` | PBKDF2 + AES-GCM, shared byte-for-byte with the data repo |
+| `presets/` | Bundled starter plans and exercise packs (public, non-personal) |
+| `datarepo-template/` | Files to copy into your private data repo |
 | `vendor/` | Vendored Leaflet, leaflet.heat, polyline decoder |
 
-Data-write ownership: the browser owns everything under `data/` except
+**This repo contains no personal data and no `data/` folder** — `/data/` is
+gitignored so a local experiment can't add one. Everything personal lives in
+the private data repo, laid out as:
+
+```
+data/plans.json  data/exercises.json  data/logs.json
+data/metrics.json  data/goals.json  data/matches.json  data/strava/…
+```
+
+Data-write ownership there: the browser owns everything under `data/` except
 `data/strava/`, which only the workflow writes — so the two writers can never
 conflict. Strava↔plan match decisions live in `data/matches.json` (browser-
 owned) rather than in the Strava files themselves.
