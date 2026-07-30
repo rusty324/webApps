@@ -131,6 +131,13 @@ export function syncStatus() {
   return { status, error: lastError, connected: canSync() };
 }
 
+// Recompute the badge state from current settings. Called after the token or
+// data repo changes so the header reflects it immediately, rather than staying
+// stale until the next sync happens to run.
+export function refreshStatus() {
+  setStatus(canSync() ? (cache.getQueue().length ? 'pending' : 'ok') : 'local');
+}
+
 // ---------- reads ----------
 
 export function get(collection) {

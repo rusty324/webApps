@@ -29,27 +29,43 @@ function renderBadge() {
   }
 }
 
+// ---------- Settings ----------
+// Sections are native <details> so the modal fits one screen; each summary
+// shows its current state, and every action sits next to the input it acts
+// on (the Save button used to live in the modal footer, which read as if
+// "Sync Strava now" were the way to save a token).
+
+function settingsSection({ id, name, state, body, open = false }) {
+  return el('details', { class: 'settings-section', dataset: { section: id }, open },
+    el('summary', {},
+      el('span', { class: 'sec-name' }, name),
+      el('span', { class: 'sec-state' }, state),
+    ),
+    el('div', { class: 'settings-body' }, body),
+  );
+}
+
+// Why a remote action can't run yet, or null when it can.
+function syncBlocker() {
+  const missing = [];
+  if (!store.hasDataRepo()) missing.push('a data repository');
+  if (!hasToken()) missing.push('a GitHub token');
+  return missing.length ? `Set ${missing.join(' and ')} first.` : null;
+}
+
 // Personal data lives in a separate PRIVATE repo, not the public one that
 // serves this app. Configured here so it needs no redeploy, and left unset
 // by default so nothing personal is ever written somewhere public.
-function dataRepoSection() {
+function dataRepoSection(reopen) {
   const current = store.getDataRepo();
   const ownerInput = el('input', { value: current?.owner ?? APP_REPO.owner, placeholder: 'github-username' });
   const repoInput = el('input', { value: current?.repo ?? '', placeholder: 'fitness-data' });
   const branchInput = el('input', { value: current?.branch ?? 'main', placeholder: 'main' });
 
-  const status = el('p', { class: 'muted' });
-  const renderStatus = () => {
-    const c = store.getDataRepo();
-    status.textContent = c?.owner && c?.repo
-      ? `Syncing data to ${c.owner}/${c.repo} (branch ${c.branch}). This should be a private repo.`
-      : 'No data repository set — the app is running local-only, keeping everything in this browser. '
-        + 'Create a private repo and enter it here to sync.';
-  };
-  renderStatus();
-
+  const blocker = syncBlocker();
   const seedBtn = el('button', {
     class: 'btn secondary',
+    disabled: !!blocker,
     onclick: async () => {
       seedBtn.disabled = true;
       try {
@@ -63,62 +79,142 @@ function dataRepoSection() {
     },
   }, 'Upload all local data');
 
-  return el('div', {},
-    el('h3', {}, 'Data repository'),
-    status,
-    el('div', { class: 'field-row' },
-      el('div', { class: 'field' }, el('label', {}, 'Owner'), ownerInput),
-      el('div', { class: 'field' }, el('label', {}, 'Repo'), repoInput),
-      el('div', { class: 'field' }, el('label', {}, 'Branch'), branchInput),
-    ),
-    el('div', { class: 'field-row' },
-      el('button', {
-        class: 'btn secondary',
-        onclick: async () => {
-          if (!repoInput.value.trim() || !ownerInput.value.trim()) {
-            toast('Enter an owner and a repo name', 'error');
-            return;
-          }
-          store.setDataRepo({ owner: ownerInput.value, repo: repoInput.value, branch: branchInput.value });
-          renderStatus();
-          renderBadge();
-          if (hasToken()) {
-            try {
-              await store.client.validate();
-              toast('Data repo saved — syncing');
-              await store.refresh();
-              tabbar.refresh();
-            } catch {
-              toast('Saved, but GitHub could not reach that repo — check the name and token scope', 'error');
+  return {
+    state: current?.owner && current?.repo ? `${current.owner}/${current.repo}` : 'not set',
+    body: el('div', {},
+      el('p', { class: 'muted' },
+        current?.owner && current?.repo
+          ? `Syncing to ${current.owner}/${current.repo} (branch ${current.branch}). This should be a private repo.`
+          : 'Not set — the app is local-only, keeping everything in this browser. '
+            + 'Create a private repo on GitHub and enter it here to sync.'),
+      el('div', { class: 'field-row' },
+        el('div', { class: 'field' }, el('label', {}, 'Owner'), ownerInput),
+        el('div', { class: 'field' }, el('label', {}, 'Repo'), repoInput),
+        el('div', { class: 'field' }, el('label', {}, 'Branch'), branchInput),
+      ),
+      el('div', { class: 'field-row' },
+        el('button', {
+          class: 'btn',
+          onclick: async () => {
+            if (!repoInput.value.trim() || !ownerInput.value.trim()) {
+              toast('Enter an owner and a repo name', 'error');
+              return;
             }
-          } else {
-            toast('Data repo saved — add a token below to start syncing');
-          }
-        },
-      }, 'Save data repo'),
-      seedBtn,
+            store.setDataRepo({ owner: ownerInput.value, repo: repoInput.value, branch: branchInput.value });
+            store.refreshStatus();
+            if (hasToken()) {
+              try {
+                await store.client.validate();
+                toast('Data repo saved — syncing');
+                store.refresh().then(() => tabbar.refresh());
+              } catch {
+                toast('Saved, but GitHub could not reach that repo — check the name and token scope', 'error');
+              }
+            } else {
+              toast('Data repo saved — now add a token below');
+            }
+            reopen('token');
+          },
+        }, 'Save data repo'),
+        seedBtn,
+      ),
+      blocker
+        ? el('p', { class: 'muted', style: 'margin:6px 0 0' }, `Upload needs a token too. ${blocker}`)
+        : el('p', { class: 'muted', style: 'margin:6px 0 0' },
+            'Press “Upload all local data” once, right after connecting a new repo, to seed it from this browser.'),
+      el('p', { class: 'muted' },
+        `The app itself is served from the public ${APP_REPO.owner}/${APP_REPO.repo}, which holds no personal data.`),
     ),
-    el('p', { class: 'muted' },
-      'Use “Upload all local data” once, right after connecting a new repo, to seed it from this browser. ',
-      `The app itself is served from the public ${APP_REPO.owner}/${APP_REPO.repo}, which holds no personal data.`,
+  };
+}
+
+// The PAT used to reach the data repo. Save sits directly under the input.
+function tokenSection(reopen) {
+  const patInput = el('input', {
+    type: 'password',
+    placeholder: hasToken() ? '••••••••  (token saved)' : 'github_pat_…',
+    autocomplete: 'off',
+  });
+  const save = async () => {
+    const v = patInput.value.trim();
+    if (!v) {
+      toast('Paste a token into the field first', 'error');
+      return;
+    }
+    setToken(v);
+    store.refreshStatus();
+    try {
+      await store.client.validate();
+      toast('Token saved — syncing');
+      store.flushQueue().then(() => store.refresh()).then(() => tabbar.refresh());
+    } catch (e) {
+      toast(e.name === 'NotConfiguredError'
+        ? 'Token saved — set a data repository above to start syncing'
+        : 'Token saved, but GitHub rejected it — check its scope and expiry', 'error');
+    }
+    reopen('token');
+  };
+
+  return {
+    state: hasToken() ? 'saved' : 'not set',
+    body: el('div', {},
+      el('p', { class: 'muted' },
+        'A fine-grained personal access token scoped to only your private data repo, with ',
+        'Contents read/write (plus Actions read/write for Strava sync). ',
+        'It needs no access to the public repo that serves this app.'),
+      el('div', { class: 'field' }, el('label', {}, 'Personal access token'), patInput),
+      el('div', { class: 'field-row' },
+        el('button', { class: 'btn', onclick: save }, 'Save token'),
+        el('button', {
+          class: 'btn secondary',
+          onclick: () => {
+            setToken('');
+            toast('Token cleared — app is local-only');
+            store.refreshStatus();
+            reopen('token');
+          },
+        }, 'Clear token'),
+      ),
+      el('p', { class: 'muted' },
+        'The token stays in this browser (localStorage) and is only sent to api.github.com.'),
     ),
-  );
+  };
+}
+
+// Triggers the workflow that lives in the DATA repo, not this one.
+function stravaSection() {
+  const blocker = syncBlocker();
+  const syncBtn = el('button', {
+    class: 'btn secondary',
+    disabled: !!blocker,
+    onclick: async () => {
+      try {
+        await store.client.dispatchWorkflow(SYNC_WORKFLOW_FILE);
+        toast('Strava sync triggered — new activities land in a minute or two');
+        pollStrava();
+      } catch (e) {
+        toast(`Could not trigger sync: ${e.message}`, 'error');
+      }
+    },
+  }, 'Sync Strava now');
+
+  return {
+    state: blocker ? 'needs setup' : 'ready',
+    body: el('div', {},
+      el('p', { class: 'muted' },
+        'Strava syncs on a schedule from a workflow in your data repo — this button just runs it now. ',
+        'It needs the Strava secrets set up there first; see datarepo-template/README.md.'),
+      syncBtn,
+      blocker ? el('p', { class: 'muted', style: 'margin:6px 0 0' }, blocker) : null,
+    ),
+  };
 }
 
 // Optional password encrypting logs, body metrics, and GPS shards in the
 // repo (AES-GCM, see js/crypto.js). Enable/change re-writes those files;
 // disabling decrypts them back to plaintext.
-function privacySection() {
+function privacySection(reopen) {
   const { enabled, locked } = store.encryption();
-  const statusLine = el('p', { class: 'muted' },
-    locked
-      ? 'Some synced files are encrypted and the password is missing or wrong — enter it below to unlock.'
-      : enabled
-        ? 'Encryption is ON — logs, body metrics, and GPS data are stored encrypted in the repo. '
-          + 'Remember to set the same password as the ENCRYPTION_PASSWORD Actions secret for Strava sync.'
-        : 'Optional: set a password to encrypt logs, body metrics, and GPS data in the repo '
-          + '(useful if the repo is public). Plans and the exercise library stay readable.',
-  );
   const pwInput = el('input', { type: 'password', placeholder: enabled ? 'new password…' : 'password…', autocomplete: 'new-password' });
 
   const apply = async () => {
@@ -136,6 +232,7 @@ function privacySection() {
     }
     setBusy(false);
     renderBadge();
+    reopen('privacy');
   };
   const disable = async () => {
     if (store.encryption().locked) {
@@ -148,6 +245,7 @@ function privacySection() {
     toast('Encryption disabled — files stored as plaintext again');
     setBusy(false);
     renderBadge();
+    reopen('privacy');
   };
   const applyBtn = el('button', { class: 'btn secondary', onclick: apply },
     locked ? 'Unlock' : enabled ? 'Change password' : 'Enable encryption');
@@ -157,24 +255,26 @@ function privacySection() {
     if (disableBtn) disableBtn.disabled = b;
   };
 
-  return el('div', {},
-    el('h3', {}, 'Privacy'),
-    statusLine,
-    el('div', { class: 'field' }, el('label', {}, 'Encryption password'), pwInput),
-    el('div', { class: 'field-row' }, applyBtn, disableBtn),
-    el('p', { class: 'muted' },
-      '⚠ There is no recovery: a lost password means the encrypted data can’t be read. ',
-      'Files committed before enabling encryption remain readable in git history.',
+  return {
+    state: locked ? '🔒 locked' : enabled ? 'encryption on' : 'encryption off',
+    body: el('div', {},
+      el('p', { class: 'muted' },
+        locked
+          ? 'Some synced files are encrypted and the password is missing or wrong — enter it below to unlock.'
+          : enabled
+            ? 'Logs, body metrics, goals, and GPS data are encrypted in the repo. '
+              + 'Set the same password as the ENCRYPTION_PASSWORD Actions variable in your data repo for Strava sync.'
+            : 'Optional second layer: encrypt logs, body metrics, goals, and GPS data before they are '
+              + 'committed. Plans and the exercise library stay readable.'),
+      el('div', { class: 'field' }, el('label', {}, 'Encryption password'), pwInput),
+      el('div', { class: 'field-row' }, applyBtn, disableBtn),
+      el('p', { class: 'muted' },
+        '⚠ There is no recovery: a lost password means the encrypted data can’t be read.'),
     ),
-  );
+  };
 }
 
-function openSettings() {
-  const patInput = el('input', {
-    type: 'password',
-    placeholder: hasToken() ? '••••••••  (token saved)' : 'github_pat_…',
-    autocomplete: 'off',
-  });
+function unitsSection() {
   // Units apply immediately on change; stored data stays metric, only the
   // display converts, so this is always safe to flip back and forth.
   const units = getUnits();
@@ -185,89 +285,103 @@ function openSettings() {
     },
   }, options.map(([v, label]) => el('option', { value: v, selected: units[key] === v }, label)));
 
-  const body = el('div', {},
-    el('h3', {}, 'Units'),
-    el('div', { class: 'field-row' },
-      el('div', { class: 'field' }, el('label', {}, 'Weight'),
-        unitSelect('weight', [['kg', 'kilograms (kg)'], ['lb', 'pounds (lb)']])),
-      el('div', { class: 'field' }, el('label', {}, 'Distance'),
-        unitSelect('distance', [['km', 'kilometers (km)'], ['mi', 'miles (mi)']])),
-      el('div', { class: 'field' }, el('label', {}, 'Body'),
-        unitSelect('length', [['cm', 'centimeters (cm)'], ['in', 'inches (in)']])),
+  return {
+    state: `${units.weight} · ${units.distance} · ${units.length}`,
+    body: el('div', {},
+      el('div', { class: 'field-row' },
+        el('div', { class: 'field' }, el('label', {}, 'Weight'),
+          unitSelect('weight', [['kg', 'kilograms (kg)'], ['lb', 'pounds (lb)']])),
+        el('div', { class: 'field' }, el('label', {}, 'Distance'),
+          unitSelect('distance', [['km', 'kilometers (km)'], ['mi', 'miles (mi)']])),
+        el('div', { class: 'field' }, el('label', {}, 'Body'),
+          unitSelect('length', [['cm', 'centimeters (cm)'], ['in', 'inches (in)']])),
+      ),
+      el('p', { class: 'muted' },
+        'Display only — stored data and exported templates are always metric, so switching never rewrites anything.'),
     ),
-    dataRepoSection(),
-    el('h3', {}, 'GitHub token'),
-    el('p', { class: 'muted' },
-      'Paste a fine-grained personal access token scoped to only your private data repo, with ',
-      'Contents read/write (plus Actions read/write for the Sync now button). ',
-      'It needs no access at all to the public repo that serves this app.',
-    ),
-    el('div', { class: 'field' }, el('label', {}, 'Personal access token'), patInput),
-    el('div', { class: 'field-row' },
+  };
+}
+
+function templatesSection() {
+  return {
+    state: 'example .plan.json',
+    body: el('div', {},
       el('button', {
         class: 'btn secondary',
         onclick: async () => {
           try {
-            await store.client.dispatchWorkflow(SYNC_WORKFLOW_FILE);
-            toast('Strava sync triggered — new activities land in a minute or two');
-            pollStrava();
+            downloadJson('example.plan.json', await loadPreset('plans/example.plan.json'));
+            toast('Template downloaded — edit it, then use Import on the Plans tab');
           } catch (e) {
-            toast(`Could not trigger sync: ${e.message}`, 'error');
+            toast(e.message, 'error');
           }
         },
-      }, 'Sync Strava now'),
-      el('button', {
-        class: 'btn secondary',
-        onclick: () => {
-          setToken('');
-          toast('Token cleared — app is in local-only mode');
-          renderBadge();
-        },
-      }, 'Clear token'),
+      }, 'Download plan template'),
+      el('p', { class: 'muted' },
+        'A starter file showing every target type (metric: kg / meters). The Plans and Fitness Library ',
+        'tabs also have Import buttons listing all the bundled starter plans and exercise packs.'),
     ),
-    el('p', { class: 'muted' },
-      'The token stays in this browser (localStorage) and is only sent to api.github.com. ',
-      'Heads-up: if the repo is public, everything synced to it — including GPS routes — is public too.',
-    ),
-    privacySection(),
-    el('h3', {}, 'Plan templates'),
-    el('button', {
-      class: 'btn secondary',
-      onclick: async () => {
-        try {
-          downloadJson('example.plan.json', await loadPreset('plans/example.plan.json'));
-          toast('Template downloaded — edit it, then use Import on the Plans tab');
-        } catch (e) {
-          toast(e.message, 'error');
-        }
-      },
-    }, 'Download plan template'),
-    el('p', { class: 'muted' },
-      'A starter .plan.json showing all target types (weights and distances are metric: kg / meters). ',
-      'Edit it in any text editor and import it from the Plans tab — where you’ll also find the ',
-      'full set of bundled starter plans and exercise packs.',
+  };
+}
+
+// openSection: which section to expand. Defaults to the first unfinished
+// setup step, so opening Settings shows you what to do next.
+function openSettings({ openSection = null } = {}) {
+  let modal;
+  const reopen = (section) => {
+    modal?.close();
+    openSettings({ openSection: section });
+  };
+
+  const repoDone = store.hasDataRepo();
+  const tokenDone = hasToken();
+  const active = openSection ?? (!repoDone ? 'datarepo' : !tokenDone ? 'token' : 'datarepo');
+
+  const specs = [
+    { id: 'datarepo', name: 'Data repository', ...dataRepoSection(reopen) },
+    { id: 'token', name: 'GitHub token', ...tokenSection(reopen) },
+    { id: 'strava', name: 'Strava sync', ...stravaSection() },
+    { id: 'privacy', name: 'Privacy', ...privacySection(reopen) },
+    { id: 'units', name: 'Units', ...unitsSection() },
+    { id: 'templates', name: 'Plan templates', ...templatesSection() },
+  ];
+  const sections = new Map();
+  const sectionEls = specs.map((spec) => {
+    const node = settingsSection({ ...spec, open: spec.id === active });
+    sections.set(spec.id, node);
+    return node;
+  });
+
+  const reveal = (id) => {
+    const node = sections.get(id);
+    if (!node) return;
+    node.open = true;
+    node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  };
+
+  // Setup checklist — answers "what do I still need to do?" at a glance.
+  const checkRow = (label, done, detail, target) => el('div', {
+    class: 'list-row check-row tappable',
+    onclick: () => reveal(target),
+  },
+    el('span', { class: `mark ${done ? 'done' : 'todo'}` }, done ? '✓' : '○'),
+    el('div', { class: 'row-main' },
+      el('div', { class: 'row-title' }, label),
+      el('div', { class: 'row-sub' }, detail),
     ),
   );
-  openModal('Settings', body, [
-    { label: 'Close', class: 'btn secondary', onClick: () => {} },
-    {
-      label: 'Save token',
-      class: 'btn',
-      onClick: async () => {
-        const v = patInput.value.trim();
-        if (!v) return true; // nothing entered; just close
-        setToken(v);
-        try {
-          await store.client.validate();
-          toast('Token saved — syncing');
-          store.flushQueue().then(() => store.refresh()).then(() => tabbar.refresh());
-        } catch {
-          toast('Token saved, but GitHub rejected it — check scope/expiry', 'error');
-        }
-        renderBadge();
-      },
-    },
-  ]);
+  const repoCfg = store.getDataRepo();
+  const checklist = el('div', { class: 'card' },
+    checkRow('Data repository', repoDone,
+      repoDone ? `${repoCfg.owner}/${repoCfg.repo}` : 'not set — tap to configure', 'datarepo'),
+    checkRow('GitHub token', tokenDone,
+      tokenDone ? 'saved in this browser' : 'not set — tap to add', 'token'),
+    checkRow('Strava sync', false,
+      syncBlocker() ? 'optional — needs the two above' : 'optional — ready to run', 'strava'),
+  );
+
+  modal = openModal('Settings', el('div', {}, checklist, sectionEls),
+    [{ label: 'Close', class: 'btn secondary', onClick: () => {} }]);
 }
 
 // After a manual workflow dispatch, watch for new Strava data for ~2 minutes.

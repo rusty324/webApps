@@ -2,7 +2,16 @@
 // Strava → repo sync. Run by .github/workflows/strava-sync.yml on a schedule
 // (and via workflow_dispatch). Zero npm dependencies — Node 18+ global fetch.
 //
-// Env: STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN
+// Secrets: STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN,
+//          ENCRYPTION_PASSWORD (only if the app's encryption is on)
+// Variables (all optional — see README):
+//   STRAVA_SYNC_AFTER   YYYY-MM-DD floor; nothing older is ever fetched.
+//                       Unset means the FIRST run records today as the
+//                       baseline, so setup doesn't pull years of history.
+//   STRAVA_SYNC_TYPES   Comma-separated sport_type allowlist, e.g.
+//                       "Run,TrailRun,Ride". Unset keeps every type.
+//   STRAVA_MAX_PAGES    Page cap, 100 activities per page (default 20).
+//
 // Writes: data/strava/activities-YYYY-MM.json (one shard per month, keyed by
 //         the activity's LOCAL date) and data/strava/state.json.
 // The browser never writes these files, so there is exactly one writer.
@@ -17,11 +26,30 @@ import { encryptJson, decryptJson, isEnvelope, DecryptError } from './crypto.js'
 const STRAVA_DIR = join(process.cwd(), 'data', 'strava');
 const STATE_PATH = join(STRAVA_DIR, 'state.json');
 const OVERLAP_SEC = 7 * 86400;
+const PER_PAGE = 100;
 
-const { STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN, ENCRYPTION_PASSWORD } = process.env;
+const {
+  STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET, STRAVA_REFRESH_TOKEN, ENCRYPTION_PASSWORD,
+  STRAVA_SYNC_AFTER, STRAVA_SYNC_TYPES, STRAVA_MAX_PAGES,
+} = process.env;
 if (!STRAVA_CLIENT_ID || !STRAVA_CLIENT_SECRET || !STRAVA_REFRESH_TOKEN) {
   console.error('Missing STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET / STRAVA_REFRESH_TOKEN');
   process.exit(1);
+}
+
+const maxPages = Math.max(1, parseInt(STRAVA_MAX_PAGES ?? '20', 10) || 20);
+const typeFilter = (STRAVA_SYNC_TYPES ?? '')
+  .split(',')
+  .map((t) => t.trim().toLowerCase())
+  .filter(Boolean);
+
+function parseFloorDate(s) {
+  const epoch = Math.floor(Date.parse(`${s}T00:00:00Z`) / 1000);
+  if (Number.isNaN(epoch)) {
+    console.error(`STRAVA_SYNC_AFTER is not a valid YYYY-MM-DD date: "${s}"`);
+    process.exit(1);
+  }
+  return epoch;
 }
 
 async function readJson(path, fallback) {
@@ -77,16 +105,25 @@ async function getAccessToken() {
 
 async function fetchActivities(token, afterEpoch) {
   const all = [];
-  for (let page = 1; page <= 20; page++) {
+  let hitCap = true;
+  for (let page = 1; page <= maxPages; page++) {
     const url = new URL('https://www.strava.com/api/v3/athlete/activities');
     url.searchParams.set('after', String(afterEpoch));
-    url.searchParams.set('per_page', '100');
+    url.searchParams.set('per_page', String(PER_PAGE));
     url.searchParams.set('page', String(page));
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) throw new Error(`Activities fetch failed: ${res.status} ${await res.text()}`);
     const batch = await res.json();
     all.push(...batch);
-    if (batch.length < 100) break;
+    if (batch.length < PER_PAGE) {
+      hitCap = false;
+      break;
+    }
+  }
+  // Never truncate silently: if every page came back full we stopped early.
+  if (hitCap) {
+    console.warn(`WARNING: hit the ${maxPages}-page cap at ${all.length} activities. `
+      + 'More history may remain — run again to continue, or raise STRAVA_MAX_PAGES.');
   }
   return all;
 }
@@ -114,12 +151,42 @@ function mapActivity(a) {
 }
 
 const state = await readJson(STATE_PATH, { lastSyncEpoch: 0 });
-const after = Math.max(0, (state.lastSyncEpoch || 0) - OVERLAP_SEC);
+const now = Math.floor(Date.now() / 1000);
+
+// The floor bounds how far back we ever look. An explicit variable always
+// wins. Otherwise the FIRST run records "now" and persists it as
+// syncFloorEpoch — persisting matters: recomputing "now" every run would
+// slide the floor forward and nothing would ever sync again.
+const explicitFloor = STRAVA_SYNC_AFTER ? parseFloorDate(STRAVA_SYNC_AFTER) : null;
+const floor = explicitFloor ?? state.syncFloorEpoch ?? now;
+const isFirstRun = state.syncFloorEpoch == null && !state.lastSyncEpoch;
+if (isFirstRun && explicitFloor == null) {
+  console.log(`First run — baseline set to ${new Date(floor * 1000).toISOString().slice(0, 10)}. `
+    + 'Only activities after this will sync; set the STRAVA_SYNC_AFTER variable to backfill history.');
+}
+
+// Normally resume from the last sync (minus the overlap), clamped so it can
+// never reach behind the floor. But if the floor was deliberately moved
+// EARLIER than the one we recorded, that's a backfill request — honour it,
+// otherwise lastSyncEpoch would keep us pinned to recent history forever.
+const storedFloor = state.syncFloorEpoch ?? null;
+const backfilling = explicitFloor != null && storedFloor != null && explicitFloor < storedFloor;
+const resume = state.lastSyncEpoch ? state.lastSyncEpoch - OVERLAP_SEC : floor;
+const after = backfilling ? explicitFloor : Math.max(floor, resume);
+if (backfilling) {
+  console.log(`STRAVA_SYNC_AFTER moved earlier — backfilling from ${new Date(after * 1000).toISOString().slice(0, 10)}.`);
+}
 
 console.log(`Fetching activities after ${new Date(after * 1000).toISOString()}`);
 const token = await getAccessToken();
-const activities = await fetchActivities(token, after);
-console.log(`Fetched ${activities.length} activities`);
+const fetched = await fetchActivities(token, after);
+
+// Strava can't filter by type server-side, so drop unwanted ones here.
+const activities = typeFilter.length
+  ? fetched.filter((a) => typeFilter.includes(String(a.sport_type || a.type || '').toLowerCase()))
+  : fetched;
+console.log(`Fetched ${fetched.length} activities`
+  + (typeFilter.length ? `; kept ${activities.length} matching ${typeFilter.join(', ')}` : ''));
 
 await mkdir(STRAVA_DIR, { recursive: true });
 
@@ -146,9 +213,15 @@ for (const [month, entries] of byMonth) {
   console.log(`Wrote ${shardPath} (${merged.length} entries)`);
 }
 
-const maxEpoch = activities.reduce(
+// Advance past everything we FETCHED, not just what survived the type
+// filter — otherwise excluded activities would be re-fetched every run.
+const maxEpoch = fetched.reduce(
   (m, a) => Math.max(m, Math.floor(new Date(a.start_date).getTime() / 1000)),
   state.lastSyncEpoch || 0,
 );
-await writeFile(STATE_PATH, JSON.stringify({ lastSyncEpoch: maxEpoch, lastRunISO: new Date().toISOString() }, null, 2) + '\n');
+await writeFile(STATE_PATH, JSON.stringify({
+  lastSyncEpoch: maxEpoch,
+  syncFloorEpoch: floor, // persisted so the default baseline can't slide
+  lastRunISO: new Date().toISOString(),
+}, null, 2) + '\n');
 console.log(`Done: ${added} new activities; lastSyncEpoch=${maxEpoch}`);

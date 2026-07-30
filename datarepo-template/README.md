@@ -46,6 +46,26 @@ repo secrets (Settings → Secrets and variables → Actions):
 The workflow then runs every four hours, and on demand from the Actions tab or
 the app's "Sync Strava now" button.
 
+### How much gets pulled
+
+By default the **first run records today as a baseline** and syncs nothing
+historical — so connecting Strava doesn't drag in years of activities. From
+then on each run fetches only what's new, plus a 7-day overlap so late watch
+uploads aren't missed. Everything is deduped by activity id, so re-runs are
+no-ops.
+
+To change that, add repo **variables** (Settings → Secrets and variables →
+Actions → *Variables* tab — these aren't secrets):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `STRAVA_SYNC_AFTER` | unset | `YYYY-MM-DD` floor. Nothing older is ever fetched. Set it to a past date to backfill history — the next run detects the earlier floor and pulls from there. |
+| `STRAVA_SYNC_TYPES` | unset = all types | Comma-separated `sport_type` allowlist, e.g. `Run,TrailRun,Ride`. Filtered activities are skipped, not stored. |
+| `STRAVA_MAX_PAGES` | `20` | Page cap, 100 activities per page. The run logs a warning if it hits the cap, so truncation is never silent. |
+
+Backfilling a long history can exceed the page cap in one run. The warning in
+the log tells you when that happened; run it again, or raise the cap.
+
 To check it works: Actions → Strava sync → Run workflow. A successful run
 either commits new activities to `data/strava/activities-YYYY-MM.json` or logs
 "No new activities". If your shards are encrypted and `ENCRYPTION_PASSWORD` is

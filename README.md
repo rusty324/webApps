@@ -116,6 +116,15 @@ and commits new activities to `data/strava/activities-YYYY-MM.json` there.
 Strava credentials never reach the browser — the site only reads the synced
 JSON through the API.
 
+**How much it pulls**: by default the first run just records today as a
+baseline and syncs nothing historical, so connecting Strava doesn't drag in
+years of activities. After that each run fetches only what's new, plus a 7-day
+overlap for late watch uploads, deduped by activity id. Three optional repo
+*variables* change that — `STRAVA_SYNC_AFTER` (a `YYYY-MM-DD` floor; set it
+earlier later on to backfill), `STRAVA_SYNC_TYPES` (a `sport_type` allowlist),
+and `STRAVA_MAX_PAGES` (page cap, warned about in the log when hit). See
+[`datarepo-template/README.md`](datarepo-template/README.md).
+
 ## Encryption (optional)
 
 Now that data lives in a private repo this is defense-in-depth rather than

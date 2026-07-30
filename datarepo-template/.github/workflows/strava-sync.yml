@@ -32,6 +32,14 @@ jobs:
           # Optional: set to the same password used in the app to write
           # encrypted GPS shards (see README "Encryption").
           ENCRYPTION_PASSWORD: ${{ secrets.ENCRYPTION_PASSWORD }}
+          # Optional bounds (repo *variables*, not secrets — see README).
+          # STRAVA_SYNC_AFTER: YYYY-MM-DD floor; unset means the first run
+          #   records today, so setup doesn't pull years of history.
+          # STRAVA_SYNC_TYPES: sport_type allowlist, e.g. "Run,TrailRun,Ride".
+          # STRAVA_MAX_PAGES:  page cap, 100 activities per page (default 20).
+          STRAVA_SYNC_AFTER: ${{ vars.STRAVA_SYNC_AFTER }}
+          STRAVA_SYNC_TYPES: ${{ vars.STRAVA_SYNC_TYPES }}
+          STRAVA_MAX_PAGES: ${{ vars.STRAVA_MAX_PAGES }}
         run: node scripts/strava-sync.mjs
 
       - name: Commit and push
