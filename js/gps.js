@@ -181,7 +181,17 @@ function localDate(ms) {
 export async function parseActivityFile(filename, text) {
   const isTcx = /\.tcx$/i.test(filename) || /<TrainingCenterDatabase/i.test(text);
   const isGpx = /\.gpx$/i.test(filename) || /<gpx/i.test(text);
-  if (!isTcx && !isGpx) throw new ParseError(`${filename}: not a .gpx or .tcx file`);
+  if (!isTcx && !isGpx) {
+    // The picker accepts anything (see filePicker), so say something useful
+    // about the two files people actually reach for by mistake.
+    if (/\.zip$/i.test(filename) || text.startsWith('PK')) {
+      throw new ParseError(`${filename}: this is a .zip archive — uncompress it first, then pick the .gpx or .tcx inside`);
+    }
+    if (/\.fit$/i.test(filename)) {
+      throw new ParseError(`${filename}: .fit files are not supported — re-export the activity as .gpx or .tcx`);
+    }
+    throw new ParseError(`${filename}: not a .gpx or .tcx file`);
+  }
 
   const doc = parseXml(text, isTcx ? 'TCX' : 'GPX');
   const r = isTcx ? readTcx(doc) : readGpx(doc);

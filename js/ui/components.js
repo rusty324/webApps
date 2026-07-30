@@ -57,6 +57,17 @@ export function toast(message, type = '') {
   setTimeout(() => t.remove(), 3500);
 }
 
+// File pickers deliberately carry no `accept` filter. iOS resolves accept
+// values to system UTIs, and any extension it doesn't recognise — .gpx and
+// .tcx among them — leaves every file greyed out and unselectable in the
+// Files picker, with no way to override. Every importer validates content
+// after selection (js/gps.js sniffs for <gpx>/<TrainingCenterDatabase>, the
+// JSON importers parse and schema-check), so filtering the picker buys
+// nothing and can lock a real file out entirely.
+export function filePicker(attrs = {}) {
+  return el('input', { type: 'file', ...attrs });
+}
+
 export function emptyState(message) {
   return el('div', { class: 'empty-state' }, message);
 }

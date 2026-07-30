@@ -14,7 +14,7 @@ import {
   formatWeight, formatDistance, formatPace, weightUnit, weightToInput, weightFromInput,
   distanceToInput, distanceFromInput, distanceUnit,
 } from '../units.js';
-import { el, openModal, confirmDialog, toast, emptyState, downloadJson } from './components.js';
+import { el, openModal, confirmDialog, toast, emptyState, downloadJson, filePicker } from './components.js';
 import { loadManifest, loadPreset } from '../presets.js';
 import { editExercise, pickExercise, targetSummary, libraryUpserter, exerciseDef, slug } from './plans-tab.js';
 
@@ -137,9 +137,7 @@ function importExercisesModal() {
     placeholder: 'Paste exercise JSON here, or pick a file below…',
     style: 'min-height:140px;font-family:monospace;font-size:0.8rem',
   });
-  const fileInput = el('input', {
-    type: 'file',
-    accept: '.json,application/json',
+  const fileInput = filePicker({
     onchange: () => {
       const f = fileInput.files?.[0];
       if (!f) return;

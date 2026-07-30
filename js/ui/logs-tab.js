@@ -15,7 +15,7 @@ import {
   distanceUnit, distanceToInput, distanceFromInput, resolveMetric,
 } from '../units.js';
 import { lineChart, datePoints } from '../charts.js';
-import { el, openModal, confirmDialog, toast, emptyState } from './components.js';
+import { el, openModal, confirmDialog, toast, emptyState, filePicker } from './components.js';
 import { pickExercise, targetSummary } from './plans-tab.js';
 
 let root = null;
@@ -214,7 +214,7 @@ function weighInCard(today) {
 // Import activity files exported from any device. Polar's API only reaches
 // back 30 days, so this is how history and other devices get in.
 function importActivitiesModal() {
-  const fileInput = el('input', { type: 'file', accept: '.gpx,.tcx', multiple: true });
+  const fileInput = filePicker({ multiple: true });
   const statusEl = el('div', {});
   let modal;
 
@@ -256,6 +256,9 @@ function importActivitiesModal() {
       'Pick several at once. Re-importing the same file does nothing, so it is safe to retry.'),
     el('div', { class: 'field' }, el('label', {}, 'Files'), fileInput),
     statusEl,
+    el('p', { class: 'muted' },
+      'On iPhone, choose “Browse” to reach Files or iCloud Drive. If your export arrived as a .zip, ',
+      'long-press it in Files and tap Uncompress first, then pick the .gpx or .tcx inside.'),
     el('p', { class: 'muted' },
       'Routes are stored for the heatmap. Distance and duration come from the file when stated, ',
       'and are otherwise computed from the track. FIT files are not supported.'),

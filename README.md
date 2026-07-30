@@ -108,6 +108,13 @@ time. This is how you bring in history Polar can't reach, or activities from a
 device with no integration. Re-importing the same file is a no-op, so retries
 are safe. FIT files are not supported — export TCX or GPX instead.
 
+The picker shows every file rather than filtering by extension, because iOS
+greys out any extension it can't map to a system type — `.gpx` and `.tcx`
+included — which made the file unselectable. Files are validated by their
+contents after you pick them, so a wrong file is rejected with a message and
+nothing is written. On iPhone, exports often arrive as a `.zip`: long-press it
+in Files, tap Uncompress, then pick the `.gpx` or `.tcx` inside.
+
 > The app used Strava until June 2026, when Strava
 > [put its API behind a $11.99/month subscription](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428).
 > That pipeline has been removed; any activities already synced from it still

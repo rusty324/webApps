@@ -16,7 +16,7 @@ import {
   weightUnit, weightToInput, weightFromInput,
   distanceUnit, distanceToInput, distanceFromInput, paceToInput, paceFromInput,
 } from '../units.js';
-import { el, openModal, confirmDialog, toast, emptyState, downloadJson } from './components.js';
+import { el, openModal, confirmDialog, toast, emptyState, downloadJson, filePicker } from './components.js';
 import { loadManifest, loadPreset } from '../presets.js';
 
 let root = null;
@@ -859,9 +859,7 @@ function importPlanModal() {
     placeholder: 'Paste a plan JSON here, or pick a file below…',
     style: 'min-height:140px;font-family:monospace;font-size:0.8rem',
   });
-  const fileInput = el('input', {
-    type: 'file',
-    accept: '.json,application/json',
+  const fileInput = filePicker({
     onchange: () => {
       const f = fileInput.files?.[0];
       if (!f) return;
