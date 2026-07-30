@@ -500,9 +500,12 @@ function activityRow(entry, lib, planById) {
   }[entry.matchStatus];
 
   const row = el('div', { class: 'list-row' },
-    el('div', { class: 'row-main' },
-      el('div', { class: 'row-title' }, entry.name || entry.type, ' ', el('span', { class: 'pill' }, entry.source ?? 'synced')),
+    el('div', { class: 'row-main tappable', onclick: () => activityEditModal(entry) },
+      el('div', { class: 'row-title' }, entry.name || entry.type, ' ',
+        el('span', { class: 'pill' }, entry.source ?? 'synced'),
+        entry.edited ? el('span', { class: 'pill', style: 'margin-left:4px' }, 'edited') : ''),
       el('div', { class: 'row-sub' }, `${formatDate(entry.date)} · ${actualSummary(entry)}`),
+      entry.notes && el('div', { class: 'row-sub' }, entry.notes),
     ),
     el('span', { class: statusPill[0] }, statusPill[1]),
   );
@@ -530,6 +533,120 @@ function activityRow(entry, lib, planById) {
     );
   }
   return row;
+}
+
+// Sports offered when correcting an activity. Values are SPORT_TYPE_MAP keys,
+// so a correction also fixes how the matcher classifies the activity.
+const SPORT_OPTIONS = [
+  ['running', 'Running'],
+  ['trail_running', 'Trail running'],
+  ['treadmill_running', 'Treadmill running'],
+  ['walking', 'Walking'],
+  ['hiking', 'Hiking'],
+  ['cycling', 'Cycling'],
+  ['indoor_cycling', 'Indoor cycling'],
+  ['swimming', 'Swimming'],
+  ['rowing', 'Rowing'],
+  ['strength_training', 'Strength training'],
+  ['other_outdoor', 'Other (outdoor)'],
+  ['other_indoor', 'Other (indoor)'],
+];
+
+// h:mm:ss / mm:ss / ss -> seconds. NaN signals "typed something unusable",
+// which the caller reports rather than silently storing a wrong duration.
+function parseHms(v) {
+  const t = String(v ?? '').trim();
+  if (!t) return null;
+  const parts = t.split(':');
+  if (parts.length > 3 || parts.some((p) => p === '' || !Number.isFinite(+p))) return NaN;
+  return Math.round(parts.reduce((acc, p) => acc * 60 + +p, 0));
+}
+function formatHms(sec) {
+  if (sec == null) return '';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.round(sec % 60);
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+// Correct a synced or imported activity. Edits are kept in a browser-owned
+// overlay (store.editActivity), so nothing here writes the sync workflow's
+// files and a later re-sync can't undo the correction.
+function activityEditModal(entry) {
+  const name = el('input', { type: 'text', value: entry.name ?? '' });
+  const options = SPORT_OPTIONS.some(([v]) => v === entry.type)
+    ? SPORT_OPTIONS
+    : [[entry.type ?? '', entry.type || 'Unknown'], ...SPORT_OPTIONS];
+  const type = el('select', {}, options.map(([v, label]) =>
+    el('option', { value: v, selected: v === entry.type }, label)));
+  const date = el('input', { type: 'date', value: entry.date });
+  const distance = el('input', {
+    type: 'number', step: '0.01', min: '0',
+    value: distanceToInput(entry.distanceM) ?? '', placeholder: distanceUnit(),
+  });
+  const duration = el('input', { type: 'text', value: formatHms(entry.movingSec), placeholder: '0:45:00' });
+  const hr = el('input', { type: 'number', step: '1', min: '0', value: entry.avgHr ?? '' });
+  const notes = el('textarea', { placeholder: 'How it felt, conditions, anything worth keeping' }, entry.notes ?? '');
+  const numOrNull = (input) => (input.value === '' ? null : parseFloat(input.value));
+  let modal;
+
+  const save = async () => {
+    const sec = parseHms(duration.value);
+    if (Number.isNaN(sec)) { toast('Duration should look like 45:00 or 1:05:30', 'error'); return false; }
+    if (!date.value) { toast('Pick a date', 'error'); return false; }
+    await store.editActivity(entry.id, {
+      name: name.value.trim() || null,
+      type: type.value || null,
+      date: date.value,
+      distanceM: distanceFromInput(numOrNull(distance)),
+      movingSec: sec,
+      avgHr: numOrNull(hr),
+      notes: notes.value.trim() || null,
+    });
+    modal.close();
+    toast('Activity updated');
+    runMatcher();
+    render();
+  };
+
+  const del = async () => {
+    if (!await confirmDialog(`Remove “${entry.name || entry.type}” from your history?`)) return false;
+    // Drop its match too, or a confirmed link would keep counting towards
+    // adherence for an activity that no longer exists.
+    const matches = store.get('matches').filter((m) => matchActivityId(m) !== entry.id);
+    if (matches.length !== store.get('matches').length) await store.save('matches', matches);
+    const how = await store.removeActivity(entry.id);
+    modal.close();
+    toast(how === 'deleted' ? 'Activity deleted' : 'Activity hidden from history');
+    render();
+  };
+
+  const actions = [{ label: 'Cancel', class: 'btn secondary', onClick: () => {} }];
+  if (entry.edited) {
+    actions.push({
+      label: 'Reset',
+      class: 'btn secondary',
+      onClick: async () => { await store.resetActivity(entry.id); toast('Reverted to the original'); render(); },
+    });
+  }
+  actions.push({ label: 'Delete', class: 'btn danger', onClick: del, keepOpen: true });
+  actions.push({ label: 'Save', class: 'btn', onClick: save, keepOpen: true });
+
+  modal = openModal('Edit activity', el('div', {},
+    el('div', { class: 'field' }, el('label', {}, 'Name'), name),
+    el('div', { class: 'field' }, el('label', {}, 'Sport'), type),
+    el('div', { class: 'field' }, el('label', {}, 'Date'), date),
+    el('div', { class: 'field-row' },
+      el('div', { class: 'field' }, el('label', {}, `Distance (${distanceUnit()})`), distance),
+      el('div', { class: 'field' }, el('label', {}, 'Duration (h:mm:ss)'), duration),
+      el('div', { class: 'field' }, el('label', {}, 'Avg HR'), hr),
+    ),
+    el('div', { class: 'field' }, el('label', {}, 'Notes'), notes),
+    el('p', { class: 'muted' }, entry.gpsPolyline
+      ? 'The GPS route is kept as recorded. Edits are stored separately from the synced file, so re-syncing won’t undo them.'
+      : 'Edits are stored separately from the synced file, so re-syncing won’t undo them.'),
+  ), actions);
 }
 
 function describeMatch(match, planById, lib) {

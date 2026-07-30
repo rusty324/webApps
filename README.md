@@ -228,6 +228,7 @@ the private data repo, laid out as:
 ```
 data/plans.json  data/exercises.json  data/logs.json
 data/metrics.json  data/goals.json  data/matches.json
+data/activity-edits.json   # your corrections to synced activities
 data/activities/…   # Polar sync workflow writes these
 data/imported/…     # the app's GPX/TCX import writes these
 ```
@@ -237,3 +238,12 @@ owns `data/activities/`; the browser owns everything else, including
 `data/imported/`. So the two can never conflict. Activity↔plan match decisions
 live in `data/matches.json` (browser-owned) rather than in the activity files
 themselves.
+
+The same reasoning covers **editing an activity** (tap any row in Logs →
+History): name, sport, date, distance, duration, average HR, and free-text
+notes. Only the fields you change are written, to `data/activity-edits.json`,
+and they are re-applied on top of the synced record every time it's read — so
+a re-sync never undoes a correction, and **Reset** puts the original back.
+Deleting works the same way: a file you imported is really deleted, while a
+workflow-synced activity is hidden through the overlay, since its file isn't
+the browser's to rewrite.

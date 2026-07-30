@@ -88,6 +88,7 @@ export function encryption() {
 
 function isEncryptedPath(path) {
   return path === DATA_FILES.logs || path === DATA_FILES.metrics || path === DATA_FILES.goals
+    || path === DATA_FILES.activityEdits // carries activity names and notes
     || path.startsWith(`${ACTIVITY_DIR}/activities-`)
     || path.startsWith(`${IMPORT_DIR}/imported-`)
     || path.startsWith(`${LEGACY_STRAVA_DIR}/activities-`);
@@ -165,7 +166,26 @@ export function getActivityEntries() {
     const shard = cache.getData(p);
     if (Array.isArray(shard)) for (const e of shard) byId.set(e.id, e);
   }
+  // Apply the user's corrections. They live in a browser-owned overlay file
+  // rather than in the shards, because data/activities/** belongs to the sync
+  // workflow — same reasoning as matches.json. Re-syncing an activity
+  // therefore never undoes an edit.
+  for (const edit of get('activityEdits')) {
+    if (!byId.has(edit.id)) continue;
+    if (edit.hidden) { byId.delete(edit.id); continue; }
+    const { id, updatedAt, hidden, ...fields } = edit;
+    byId.set(id, { ...byId.get(id), ...fields, edited: true });
+  }
   return [...byId.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
+}
+
+// The one unedited copy of an activity, for "reset to original".
+export function getActivityOriginal(id) {
+  for (const p of cache.getData(ACTIVITY_INDEX) ?? []) {
+    const found = (cache.getData(p) ?? []).find((e) => e.id === id);
+    if (found) return found;
+  }
+  return null;
 }
 
 // ---------- writes ----------
@@ -344,12 +364,57 @@ export async function addImportedActivities(entries) {
   return added;
 }
 
+// ---------- activity corrections ----------
+
+// Store only the fields that actually differ from the synced/imported record,
+// so a field the user didn't touch still tracks its source.
+export async function editActivity(id, fields) {
+  const original = getActivityOriginal(id);
+  const changed = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (original && (original[k] ?? null) === (v ?? null)) continue;
+    changed[k] = v ?? null;
+  }
+  const existing = get('activityEdits').find((e) => e.id === id);
+  if (!Object.keys(changed).length && !existing) return;
+  if (!Object.keys(changed).length) return resetActivity(id);
+  await upsert('activityEdits', { id, ...changed, updatedAt: new Date().toISOString() });
+}
+
+export async function resetActivity(id) {
+  await remove('activityEdits', id);
+}
+
+export function activityEdit(id) {
+  return get('activityEdits').find((e) => e.id === id) ?? null;
+}
+
+// Imports are browser-owned, so they really are deleted. Anything from the
+// sync workflow lives in a file this app must not write, so it is hidden
+// through the overlay instead — and stays hidden if it syncs again.
+export async function removeActivity(id) {
+  let deleted = false;
+  for (const path of cache.getData(ACTIVITY_INDEX) ?? []) {
+    if (!path.startsWith(`${IMPORT_DIR}/`)) continue;
+    const shard = cache.getData(path) ?? [];
+    if (!shard.some((e) => e.id === id)) continue;
+    cache.setData(path, shard.filter((e) => e.id !== id));
+    cache.markDirty(path);
+    await push(path, null);
+    deleted = true;
+  }
+  if (deleted) await resetActivity(id);
+  else await upsert('activityEdits', { id, hidden: true, updatedAt: new Date().toISOString() });
+  emit({ type: 'changed', collection: 'activities' });
+  return deleted ? 'deleted' : 'hidden';
+}
+
 // Re-upload cached collections to the data repo. `collections` defaults to
 // the encryptable ones, which is what enabling/disabling a password needs;
 // pass all of DATA_FILES to seed a freshly-created repo from this browser.
 // Activity shards are normally Actions-owned; these migration writes are the
 // documented exception (the sync script's id-dedupe makes races benign).
-export async function rewriteEncryptedFiles(collections = ['logs', 'metrics', 'goals']) {
+export async function rewriteEncryptedFiles(collections = ['logs', 'metrics', 'goals', 'activityEdits']) {
   if (!canSync()) return; // local mode, or no repo configured yet
   for (const collection of collections) {
     const path = DATA_FILES[collection];

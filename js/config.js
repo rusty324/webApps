@@ -33,6 +33,10 @@ export const DATA_FILES = {
   metrics: 'data/metrics.json',
   matches: 'data/matches.json',
   goals: 'data/goals.json',
+  // Per-activity corrections (name, sport, date, distance…). An overlay rather
+  // than in-place edits, because most activity shards belong to the sync
+  // workflow and the browser must not write them — see store.js.
+  activityEdits: 'data/activity-edits.json',
 };
 // Synced activities, split by writer so the two can never conflict:
 //   ACTIVITY_DIR — written only by the Polar sync workflow (Actions)

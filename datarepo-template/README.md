@@ -116,6 +116,7 @@ mid-run means the next run re-fetches rather than losing an activity.
 ```
 data/plans.json          data/exercises.json   data/matches.json
 data/logs.json           data/metrics.json     data/goals.json
+data/activity-edits.json                        # corrections to synced activities
 data/activities/sync-state.json                 # written by the workflow
 data/activities/activities-YYYY-MM.json         # written by the workflow
 data/imported/imported-YYYY-MM.json             # written by the app's import

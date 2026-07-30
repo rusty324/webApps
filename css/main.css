@@ -146,8 +146,9 @@ input[type="number"] { -moz-appearance: textfield; }
 textarea { min-height: 70px; resize: vertical; }
 label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 4px; }
 .field { margin-bottom: 12px; }
-.field-row { display: flex; gap: 10px; }
-.field-row > * { flex: 1; min-width: 0; }
+/* Wraps rather than squeezing three inputs into a phone-width row. */
+.field-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.field-row > * { flex: 1 1 110px; min-width: 0; }
 
 .card {
   background: var(--surface);
@@ -170,8 +171,20 @@ label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-botto
 }
 .list-row:last-child { border-bottom: none; }
 .row-main { flex: 1; min-width: 0; }
-.row-title { font-weight: 600; }
-.row-sub { font-size: 0.83rem; color: var(--text-dim); }
+/* Imported activity names can be one long unbroken filename, which `normal`
+   word-wrapping refuses to break — it then runs off the side of a phone.
+   Break anywhere, and cap the title at two lines so one absurd name can't
+   push the rest of the row off screen; the full text is in the edit modal. */
+.row-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.row-sub { font-size: 0.83rem; color: var(--text-dim); overflow-wrap: anywhere; }
 .row-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 .muted { color: var(--text-dim); font-size: 0.9rem; }
@@ -182,6 +195,8 @@ label { display: block; font-size: 0.85rem; color: var(--text-dim); margin-botto
 }
 .pill {
   display: inline-block;
+  white-space: nowrap;
+  flex-shrink: 0;
   font-size: 0.72rem;
   font-weight: 600;
   padding: 2px 8px;
