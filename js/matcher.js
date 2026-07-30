@@ -1,26 +1,26 @@
-// Fuzzy matcher: pairs unhandled Strava activities with planned block items.
+// Fuzzy matcher: pairs unhandled synced activities with planned block items.
 // Pure functions — no DOM, no storage — so it's trivially unit-testable.
 // Runs client-side on Logs load, so it stays correct when plans are edited
 // after a sync has already happened.
 
-import { STRAVA_TYPE_MAP, MATCH_WINDOW_DAYS } from './config.js';
+import { sportMapping, MATCH_WINDOW_DAYS } from './config.js';
 import { addDays, diffDays } from './dates.js';
 import { allSessions, sessionItems } from './models.js';
 
-// Returns [{stravaId, planId, sessionId, plannedExerciseId, score}] of NEW
+// Returns [{activityId, planId, sessionId, plannedExerciseId, score}] of NEW
 // suggestions — activities that already have a match record (suggested/
 // confirmed/rejected) are skipped, so user decisions are terminal.
-export function findSuggestions(stravaEntries, plans, matches, exercises, windowDays = MATCH_WINDOW_DAYS) {
-  const handled = new Set(matches.map((m) => m.stravaId));
+export function findSuggestions(activityEntries, plans, matches, exercises, windowDays = MATCH_WINDOW_DAYS) {
+  const handled = new Set(matches.map((m) => m.activityId));
   const exById = new Map(exercises.map((e) => [e.id, e]));
   const out = [];
-  for (const entry of stravaEntries) {
-    if (handled.has(entry.stravaId)) continue;
+  for (const entry of activityEntries) {
+    if (handled.has(entry.id)) continue;
     const candidates = findCandidates(entry, plans, exById, windowDays);
     const best = pickWinner(candidates);
     if (best) {
       out.push({
-        stravaId: entry.stravaId,
+        activityId: entry.id,
         planId: best.planId,
         sessionId: best.sessionId,
         plannedExerciseId: best.plannedExerciseId,
@@ -31,7 +31,7 @@ export function findSuggestions(stravaEntries, plans, matches, exercises, window
   return out;
 }
 
-// Does an exercise plausibly correspond to a Strava activity type?
+// Does an exercise plausibly correspond to a synced activity's sport type?
 // Prefer the finer-grained modality; fall back to category.
 function activityMatches(ex, mapping) {
   if (mapping.modality) {
@@ -43,7 +43,7 @@ function activityMatches(ex, mapping) {
 // All plausible planned block items for one activity (used both by the
 // auto-matcher and by the manual "link to plan" picker).
 export function findCandidates(entry, plans, exById, windowDays = MATCH_WINDOW_DAYS) {
-  const mapping = STRAVA_TYPE_MAP[entry.type] ?? { category: 'other' };
+  const mapping = sportMapping(entry.type);
   const candidates = [];
   for (const plan of plans) {
     if (plan.status !== 'active') continue;

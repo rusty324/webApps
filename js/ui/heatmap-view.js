@@ -1,4 +1,4 @@
-// GPS heatmap: accumulated route density across all Strava activities with
+// GPS heatmap: accumulated route density across all synced activities with
 // polylines. Lazy-loaded — Leaflet (~150 KB) only loads when this view opens.
 
 import { decode } from '../../vendor/polyline.js';

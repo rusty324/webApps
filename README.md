@@ -3,8 +3,9 @@
 A single-user fitness tracking and planning web app that runs entirely on
 GitHub Pages — no backend. Data is saved as JSON files in this branch via the
 GitHub Contents API, with localStorage as a write-through cache so the app
-works offline and syncs when you're back online. Strava activities sync in
-automatically via a scheduled GitHub Actions workflow.
+works offline and syncs when you're back online. Polar activities sync in
+automatically via a scheduled GitHub Actions workflow, and GPX/TCX files from
+any device can be imported directly.
 
 *(This branch is one app in the webApps collection — GitHub Pages serves
 whichever branch is selected in the repo's Pages settings.)*
@@ -33,8 +34,9 @@ whichever branch is selected in the repo's Pages settings.)*
   (weight, body fat %, resting HR, waist — extensible via `BODY_METRICS` in
   `js/config.js`), per-metric trend charts plus pace/distance charts, and a
   plan-adherence percentage.
-- **Strava sync** — a scheduled workflow pulls new activities into
-  `data/strava/`; a fuzzy matcher suggests links between synced activities and
+- **Activity sync** — a scheduled workflow pulls new Polar activities into
+  `data/activities/`, and **Logs → History → Import GPX/TCX** brings in files
+  from any device. A fuzzy matcher suggests links between synced activities and
   planned sessions (one-tap confirm/reject).
 - **GPS heatmap** — accumulated route density across all synced activities
   with GPS data (Leaflet + leaflet.heat, OpenStreetMap tiles).
@@ -58,13 +60,13 @@ repo needs GitHub Pro, and the app isn't hosted from there.
 1. New repository → name it e.g. `fitness-data` → **Private** → tick
    **Add a README** (this creates the default branch, which the API needs).
 2. Copy the contents of [`datarepo-template/`](datarepo-template/) into it —
-   the Strava workflow and its two scripts. That folder has its own README
+   the Polar sync workflow and its two scripts. That folder has its own README
    with the details.
 3. Create a fine-grained token (GitHub → Settings → Developer settings →
    **Fine-grained tokens**):
    - Repository access: **only your new private data repo**
    - Permissions: **Contents: Read and write**, plus **Actions: Read and
-     write** for the in-app "Sync Strava now" button
+     write** for the in-app "Sync activities now" button
    - The token needs *no* access to this public repo, so a leaked token
      cannot modify the deployed app.
 4. In the app: ⚙ Settings → **Data repository** → enter owner, repo, and
@@ -82,63 +84,49 @@ history, or delete and recreate the repo, if that matters to you.
 
 ⚙ Settings also has **unit preferences** — weight (kg/lb), distance (km/mi,
 which also flips pace between min/km and min/mi), and body measurements
-(cm/in). Units are a per-browser display setting: stored JSON, Strava data,
+(cm/in). Units are a per-browser display setting: stored JSON, synced activities,
 and exported plan templates are always metric (kg / meters / cm), converted
 at the UI only, so switching units never rewrites data.
 
-### 3. Strava sync (optional, one-time)
+### 3. Activity sync (optional)
 
-1. Create an API application at <https://www.strava.com/settings/api>
-   (category "personal"). Note the **Client ID** and **Client Secret**.
-2. Authorize your own app — visit (with your client id):
+Two independent ways to get activities in — use either or both:
 
-   ```
-   https://www.strava.com/oauth/authorize?client_id=CLIENT_ID&response_type=code&redirect_uri=http://localhost&approval_prompt=force&scope=activity:read_all
-   ```
+**Polar (free API).** Polar AccessLink needs no subscription. The one-time
+OAuth bootstrap and the repo secrets it needs are documented in
+[`datarepo-template/README.md`](datarepo-template/README.md); the sync workflow
+lives in your data repo because that is where it writes. It runs every 4 hours,
+or on demand from that repo's Actions tab or the app's "Sync activities now"
+button. Polar credentials never reach the browser.
 
-   Approve; you land on `http://localhost/?code=AUTH_CODE...` — copy the code.
-3. Exchange the code for a refresh token:
+Note that **Polar only exposes the last ~30 days**, and only exercises uploaded
+after you register your client, so there is no historical backfill through it.
 
-   ```sh
-   curl -X POST https://www.strava.com/oauth/token \
-     -d client_id=CLIENT_ID -d client_secret=CLIENT_SECRET \
-     -d code=AUTH_CODE -d grant_type=authorization_code
-   ```
+**GPX/TCX import (no API at all).** Logs → History → **Import GPX/TCX** accepts
+files exported from Polar Flow, Garmin Connect, or anything else, several at a
+time. This is how you bring in history Polar can't reach, or activities from a
+device with no integration. Re-importing the same file is a no-op, so retries
+are safe. FIT files are not supported — export TCX or GPX instead.
 
-   Copy `refresh_token` from the response.
-4. In **your private data repo** (not this one) → Settings → Secrets and
-   variables → Actions → add three secrets: `STRAVA_CLIENT_ID`,
-   `STRAVA_CLIENT_SECRET`, `STRAVA_REFRESH_TOKEN`.
-
-The workflow lives in the data repo because that's where it writes. It runs
-every 4 hours (or on demand from that repo's Actions tab, or the in-app button)
-and commits new activities to `data/strava/activities-YYYY-MM.json` there.
-Strava credentials never reach the browser — the site only reads the synced
-JSON through the API.
-
-**How much it pulls**: by default the first run just records today as a
-baseline and syncs nothing historical, so connecting Strava doesn't drag in
-years of activities. After that each run fetches only what's new, plus a 7-day
-overlap for late watch uploads, deduped by activity id. Three optional repo
-*variables* change that — `STRAVA_SYNC_AFTER` (a `YYYY-MM-DD` floor; set it
-earlier later on to backfill), `STRAVA_SYNC_TYPES` (a `sport_type` allowlist),
-and `STRAVA_MAX_PAGES` (page cap, warned about in the log when hit). See
-[`datarepo-template/README.md`](datarepo-template/README.md).
+> The app used Strava until June 2026, when Strava
+> [put its API behind a $11.99/month subscription](https://communityhub.strava.com/insider-journal-9/an-update-to-our-developer-program-13428).
+> That pipeline has been removed; any activities already synced from it still
+> display, since the app still reads a legacy `data/strava/` folder.
 
 ## Encryption (optional)
 
 Now that data lives in a private repo this is defense-in-depth rather than
 load-bearing, but it's still worth enabling. Set a password in ⚙ Settings →
-Privacy and **logs, body metrics, goals, and Strava GPS shards** are committed
+Privacy and **logs, body metrics, goals, and all activity shards** are committed
 as AES-256-GCM envelopes (key derived from your password with PBKDF2, 310k
 iterations) instead of readable JSON. Plans, the exercise library, and match
 links stay plaintext. It protects you if the repo is ever made public by
 mistake, shared, or exposed by a leaked token.
 
-- For Strava sync to keep working, add the same password as an Actions secret
-  named `ENCRYPTION_PASSWORD` **in the data repo**. If the secret is missing
-  while shards are encrypted, the sync fails loudly rather than writing mixed
-  plaintext.
+- For the Polar sync to keep working, add the same password as an Actions
+  secret named `ENCRYPTION_PASSWORD` **in the data repo**. If the secret is
+  missing while shards are encrypted, the sync fails loudly rather than writing
+  mixed plaintext.
 - The password is remembered in this browser's localStorage (same trust
   model as the PAT). On a new device, enter it once in Settings to unlock.
 - **No recovery**: a lost password makes the encrypted data unreadable.
@@ -209,14 +197,15 @@ repo (or `datarepo-template/`):
 
 ```sh
 STRAVA_CLIENT_ID=… STRAVA_CLIENT_SECRET=… STRAVA_REFRESH_TOKEN=… \
-  node scripts/strava-sync.mjs
+  node scripts/polar-sync.mjs
 ```
 
 ### Layout
 
 | Path | What |
 |---|---|
-| `js/config.js` | Tab registry, Strava type→category map, data file paths |
+| `js/config.js` | Tab registry, sport type→category map, data file paths |
+| `js/gps.js` | GPX/TCX parsing, track downsampling, polyline encoding |
 | `js/storage/` | GitHub Contents API client, localStorage cache, store |
 | `js/ui/` | Tab modules (plans, logs, library, heatmap) + shared components |
 | `js/matcher.js` | Fuzzy matcher (pure functions) |
@@ -231,10 +220,13 @@ the private data repo, laid out as:
 
 ```
 data/plans.json  data/exercises.json  data/logs.json
-data/metrics.json  data/goals.json  data/matches.json  data/strava/…
+data/metrics.json  data/goals.json  data/matches.json
+data/activities/…   # Polar sync workflow writes these
+data/imported/…     # the app's GPX/TCX import writes these
 ```
 
-Data-write ownership there: the browser owns everything under `data/` except
-`data/strava/`, which only the workflow writes — so the two writers can never
-conflict. Strava↔plan match decisions live in `data/matches.json` (browser-
-owned) rather than in the Strava files themselves.
+Data-write ownership there: every file has exactly one writer. The workflow
+owns `data/activities/`; the browser owns everything else, including
+`data/imported/`. So the two can never conflict. Activity↔plan match decisions
+live in `data/matches.json` (browser-owned) rather than in the activity files
+themselves.

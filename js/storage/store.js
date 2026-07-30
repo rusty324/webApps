@@ -3,7 +3,8 @@
 //
 // Write ownership (the reason browser/Actions conflicts can't happen):
 //   - browser owns everything in DATA_FILES (incl. matches.json)
-//   - the Actions workflow owns data/strava/** — read-only here
+//   - the Polar sync workflow owns data/activities/** — read-only here
+//   - the browser owns data/imported/** (file imports)
 // The merge path below only ever handles browser-vs-browser (second device
 // or tab) conflicts, merged per record id with local dirty records winning.
 // Note: a record deleted locally can resurrect from such a merge; accepted
@@ -13,7 +14,7 @@ import * as cache from './cache.js';
 import { makeClient, hasToken, ConflictError, NotFoundError, AuthError } from './github-api.js';
 import { encryptJson, decryptJson, isEnvelope } from '../crypto.js';
 import { migratePlan, migrateExercise } from '../models.js';
-import { DATA_FILES, STRAVA_DIR, DATA_REPO_DEFAULT } from '../config.js';
+import { DATA_FILES, ACTIVITY_DIR, IMPORT_DIR, LEGACY_STRAVA_DIR, DATA_REPO_DEFAULT } from '../config.js';
 
 // ---------- data repository ----------
 // Personal data lives in a separate PRIVATE repo, never the public one that
@@ -55,6 +56,9 @@ function canSync() {
   return hasToken() && hasDataRepo();
 }
 
+// Cached list of every activity shard path we know about, across all dirs.
+const ACTIVITY_INDEX = 'ft.activity.index';
+
 const client = makeClient(getDataRepo);
 const listeners = new Set();
 let status = 'local'; // 'local' | 'ok' | 'pending' | 'error'
@@ -62,7 +66,7 @@ let lastError = null;
 
 // ---------- encryption (optional password) ----------
 // When a password is set, these repo files are written as AES-GCM envelopes
-// (see crypto.js): logs, body metrics, and all Strava GPS shards. Plans,
+// (see crypto.js): logs, body metrics, goals, and all activity shards. Plans,
 // exercises, and match links stay plaintext. The local cache is always
 // plaintext — the device is trusted (same model as the PAT).
 
@@ -84,7 +88,9 @@ export function encryption() {
 
 function isEncryptedPath(path) {
   return path === DATA_FILES.logs || path === DATA_FILES.metrics || path === DATA_FILES.goals
-    || path.startsWith(`${STRAVA_DIR}/activities-`);
+    || path.startsWith(`${ACTIVITY_DIR}/activities-`)
+    || path.startsWith(`${IMPORT_DIR}/imported-`)
+    || path.startsWith(`${LEGACY_STRAVA_DIR}/activities-`);
 }
 
 // Repo-file (de)serialization boundary — the ONLY place ciphertext exists.
@@ -149,16 +155,17 @@ export function get(collection) {
   return data;
 }
 
-// All Strava entries across cached month shards, newest first.
-export function getStravaEntries() {
-  const shardPaths = cache.getData('ft.strava.index') ?? [];
-  const all = [];
-  for (const p of shardPaths) {
+// Every synced activity across cached month shards, newest first. Merges the
+// Actions-written directory, browser-written imports, and legacy Strava
+// shards. Deduped by id in case the same activity arrived twice (e.g. synced
+// and then also imported from a file).
+export function getActivityEntries() {
+  const byId = new Map();
+  for (const p of cache.getData(ACTIVITY_INDEX) ?? []) {
     const shard = cache.getData(p);
-    if (Array.isArray(shard)) all.push(...shard);
+    if (Array.isArray(shard)) for (const e of shard) byId.set(e.id, e);
   }
-  all.sort((a, b) => (a.date < b.date ? 1 : -1));
-  return all;
+  return [...byId.values()].sort((a, b) => (a.date < b.date ? 1 : -1));
 }
 
 // ---------- writes ----------
@@ -265,7 +272,7 @@ export async function refresh() {
         if (!(e instanceof NotFoundError)) throw e; // absent file = empty collection
       }
     }
-    await refreshStrava();
+    await refreshActivities();
     if (!cache.getQueue().length) setStatus('ok');
   } catch (e) {
     if (e instanceof AuthError) setStatus('error', e);
@@ -273,14 +280,22 @@ export async function refresh() {
   }
 }
 
-export async function refreshStrava() {
-  const entries = await client.listDir(STRAVA_DIR);
-  const shards = entries.filter((e) => /^activities-\d{4}-\d{2}\.json$/.test(e.name));
+// Pull month shards from all three activity directories. Locally-dirty
+// imports are skipped so an unpushed import isn't clobbered by the remote.
+export async function refreshActivities() {
+  const dirs = [
+    { dir: ACTIVITY_DIR, prefix: 'activities-' },
+    { dir: IMPORT_DIR, prefix: 'imported-' },
+    { dir: LEGACY_STRAVA_DIR, prefix: 'activities-' },
+  ];
   const index = [];
   let changed = false;
-  for (const s of shards) {
-    index.push(s.path);
-    if (s.sha !== cache.getSha(s.path)) {
+  for (const { dir, prefix } of dirs) {
+    const entries = await client.listDir(dir);
+    const re = new RegExp(`^${prefix}\\d{4}-\\d{2}\\.json$`);
+    for (const s of entries.filter((e) => re.test(e.name))) {
+      index.push(s.path);
+      if (cache.isDirty(s.path) || s.sha === cache.getSha(s.path)) continue;
       const { content, sha } = await client.getFile(s.path);
       const res = await deserializeFile(s.path, JSON.parse(content));
       if (res.locked) {
@@ -292,15 +307,47 @@ export async function refreshStrava() {
       changed = true;
     }
   }
-  cache.setData('ft.strava.index', index);
-  if (changed) emit({ type: 'changed', collection: 'strava' });
+  // Keep any locally-created import shards that aren't on the remote yet.
+  for (const p of cache.getData(ACTIVITY_INDEX) ?? []) {
+    if (!index.includes(p) && cache.isDirty(p)) index.push(p);
+  }
+  cache.setData(ACTIVITY_INDEX, index);
+  if (changed) emit({ type: 'changed', collection: 'activities' });
   return changed;
+}
+
+// Add imported activities to the browser-owned import shards, keyed by local
+// month and deduped by id. Returns how many were new.
+export async function addImportedActivities(entries) {
+  const byMonth = new Map();
+  for (const e of entries) {
+    const path = `${IMPORT_DIR}/imported-${e.date.slice(0, 7)}.json`;
+    if (!byMonth.has(path)) byMonth.set(path, []);
+    byMonth.get(path).push(e);
+  }
+  let added = 0;
+  const index = (cache.getData(ACTIVITY_INDEX) ?? []).slice();
+  for (const [path, incoming] of byMonth) {
+    const existing = cache.getData(path) ?? [];
+    const byId = new Map(existing.map((e) => [e.id, e]));
+    for (const e of incoming) {
+      if (!byId.has(e.id)) added++;
+      byId.set(e.id, e);
+    }
+    cache.setData(path, [...byId.values()].sort((a, b) => (a.date < b.date ? -1 : 1)));
+    cache.markDirty(path);
+    if (!index.includes(path)) index.push(path);
+    await push(path, null);
+  }
+  cache.setData(ACTIVITY_INDEX, index);
+  emit({ type: 'changed', collection: 'activities' });
+  return added;
 }
 
 // Re-upload cached collections to the data repo. `collections` defaults to
 // the encryptable ones, which is what enabling/disabling a password needs;
 // pass all of DATA_FILES to seed a freshly-created repo from this browser.
-// Strava shards are normally Actions-owned; these migration writes are the
+// Activity shards are normally Actions-owned; these migration writes are the
 // documented exception (the sync script's id-dedupe makes races benign).
 export async function rewriteEncryptedFiles(collections = ['logs', 'metrics', 'goals']) {
   if (!canSync()) return; // local mode, or no repo configured yet
@@ -309,8 +356,7 @@ export async function rewriteEncryptedFiles(collections = ['logs', 'metrics', 'g
     cache.markDirty(path);
     await push(path, collection);
   }
-  const shardPaths = cache.getData('ft.strava.index') ?? [];
-  for (const path of shardPaths) {
+  for (const path of cache.getData(ACTIVITY_INDEX) ?? []) {
     const data = cache.getData(path);
     if (!Array.isArray(data)) continue; // never had it decrypted — skip
     const content = await serializeFile(path, data);
@@ -330,7 +376,7 @@ export async function rewriteEncryptedFiles(collections = ['logs', 'metrics', 'g
 export async function pushAllData() {
   if (!canSync()) throw new Error('Set a data repository and a token first');
   for (const path of Object.values(DATA_FILES)) cache.setSha(path, null);
-  for (const path of cache.getData('ft.strava.index') ?? []) cache.setSha(path, null);
+  for (const path of cache.getData(ACTIVITY_INDEX) ?? []) cache.setSha(path, null);
   await rewriteEncryptedFiles(Object.keys(DATA_FILES));
 }
 

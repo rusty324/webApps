@@ -352,7 +352,7 @@ function deleteExerciseFlow(ex) {
       }),
     option('Delete anyway', 'danger',
       'Plans and history keep the reference but show “Unknown exercise”, running charts drop those logs, '
-      + 'and Strava auto-matching stops suggesting it.',
+      + 'and activity auto-matching stops suggesting it.',
       async () => {
         modal.close();
         if (!(await confirmDialog(`Permanently delete “${ex.name}” and leave ${parts.join(', ')} orphaned?`))) return;
@@ -504,7 +504,7 @@ function goalCard(goal, exById) {
 }
 
 // Fastest logged effort whose distance is within ±2.5% of the goal distance,
-// across Strava activities and manual distance logs.
+// across synced activities and manual distance logs.
 function bestRunEffort(distanceM) {
   const tol = distanceM * 0.025;
   let best = null;
@@ -515,7 +515,7 @@ function bestRunEffort(distanceM) {
     const normalized = sec * (distanceM / d);
     if (!best || normalized < best.sec) best = { sec: Math.round(normalized), date };
   };
-  for (const e of store.getStravaEntries()) consider(e.distanceM, e.movingSec, e.date);
+  for (const e of store.getActivityEntries()) consider(e.distanceM, e.movingSec, e.date);
   for (const l of store.get('logs')) consider(l.actual?.distanceM, l.actual?.movingSec, l.date);
   return best;
 }

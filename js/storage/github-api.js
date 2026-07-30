@@ -129,7 +129,7 @@ export function makeClient(repoCfgOrGetter) {
       return Array.isArray(json) ? json.map(({ name, path: p, sha }) => ({ name, path: p, sha })) : [];
     },
 
-    // Fire the Strava sync workflow via workflow_dispatch (PAT needs Actions:write).
+    // Fire the activity sync workflow via workflow_dispatch (PAT needs Actions:write).
     async dispatchWorkflow(workflowFile) {
       const res = await fetch(
         `${API}/repos/${cfg().owner}/${cfg().repo}/actions/workflows/${workflowFile}/dispatches`,

@@ -97,8 +97,13 @@ export function makeBodyMetric({
   return { id: uid(), date, weight, bodyFat, restingHr, waist, notes };
 }
 
-export function makeMatch({ stravaId, status, planId = null, plannedExerciseId = null, sessionId = null } = {}) {
-  return { id: `match-${stravaId}`, stravaId, status, planId, sessionId, plannedExerciseId };
+export function makeMatch({ activityId, status, planId = null, plannedExerciseId = null, sessionId = null } = {}) {
+  return { id: `match-${activityId}`, activityId, status, planId, sessionId, plannedExerciseId };
+}
+
+// Match records written before the Polar switch keyed on `stravaId`.
+export function matchActivityId(m) {
+  return m.activityId ?? m.stravaId;
 }
 
 // Goals (Fitness Library → Goals). type: 'bodyweight' | 'runTime' | 'exercise'

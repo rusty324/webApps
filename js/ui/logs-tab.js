@@ -1,10 +1,11 @@
-// Logs tab: Today (log against the active plan), History (with Strava
-// match suggestions), Metrics (weight/pace charts + adherence), Heatmap.
+// Logs tab: Today (log against the active plan), History (synced activities
+// with match suggestions, plus GPX/TCX import), Metrics (weight/pace charts
+// + adherence), Heatmap.
 
 import * as store from '../storage/store.js';
-import { makeLogEntry, makeBodyMetric, makeMatch, allSessions, sessionItems } from '../models.js';
+import { makeLogEntry, makeBodyMetric, makeMatch, matchActivityId, allSessions, sessionItems } from '../models.js';
 import { findSuggestions, findCandidates } from '../matcher.js';
-import { STRAVA_TYPE_MAP, BODY_METRICS } from '../config.js';
+import { sportMapping, BODY_METRICS } from '../config.js';
 import {
   todayStr, addDays, diffDays, formatDate, formatDateLong, formatDuration,
 } from '../dates.js';
@@ -44,10 +45,10 @@ export function unmount() {
 // Persist fresh suggestions so they survive reloads and are never recomputed
 // once the user confirms/rejects them.
 function runMatcher() {
-  const strava = store.getStravaEntries();
-  if (!strava.length) return;
+  const activities = store.getActivityEntries();
+  if (!activities.length) return;
   const matches = store.get('matches');
-  const fresh = findSuggestions(strava, store.get('plans'), matches, store.get('exercises'));
+  const fresh = findSuggestions(activities, store.get('plans'), matches, store.get('exercises'));
   if (fresh.length) {
     const records = matches.concat(fresh.map((f) => makeMatch({ ...f, status: 'suggested' })));
     store.save('matches', records);
@@ -95,11 +96,11 @@ function activePlans() {
   return store.get('plans').filter((p) => p.status === 'active');
 }
 
-// Strava entries decorated with their computed matchStatus (overlay merge).
-function stravaWithStatus() {
-  const matches = new Map(store.get('matches').map((m) => [m.stravaId, m]));
-  return store.getStravaEntries().map((entry) => {
-    const m = matches.get(entry.stravaId);
+// Synced activities decorated with their computed matchStatus (overlay merge).
+function activitiesWithStatus() {
+  const matches = new Map(store.get('matches').map((m) => [matchActivityId(m), m]));
+  return store.getActivityEntries().map((entry) => {
+    const m = matches.get(entry.id);
     return {
       ...entry,
       matchStatus: m?.status ?? 'unmatched',
@@ -208,6 +209,60 @@ function weighInCard(today) {
       el('button', { class: 'btn small secondary', onclick: () => logBodyMetric(todays ?? null) }, 'More…'),
     ),
   );
+}
+
+// Import activity files exported from any device. Polar's API only reaches
+// back 30 days, so this is how history and other devices get in.
+function importActivitiesModal() {
+  const fileInput = el('input', { type: 'file', accept: '.gpx,.tcx', multiple: true });
+  const statusEl = el('div', {});
+  let modal;
+
+  const run = async () => {
+    const files = [...(fileInput.files ?? [])];
+    if (!files.length) { toast('Choose one or more .gpx or .tcx files', 'error'); return; }
+    statusEl.innerHTML = '';
+    statusEl.appendChild(el('p', { class: 'muted' }, `Parsing ${files.length} file${files.length === 1 ? '' : 's'}…`));
+    const { parseActivityFile, ParseError } = await import('../gps.js');
+    const parsed = [];
+    const failures = [];
+    for (const f of files) {
+      try {
+        parsed.push(await parseActivityFile(f.name, await f.text()));
+      } catch (e) {
+        failures.push(e instanceof ParseError ? e.message : `${f.name}: ${e.message}`);
+      }
+    }
+    // Nothing is written unless at least one file parsed cleanly.
+    if (!parsed.length) {
+      statusEl.innerHTML = '';
+      statusEl.appendChild(el('p', { class: 'muted' }, failures.join(' · ')));
+      toast('No files could be read', 'error');
+      return;
+    }
+    const added = await store.addImportedActivities(parsed);
+    modal.close();
+    const withRoutes = parsed.filter((p) => p.gpsPolyline).length;
+    toast(added
+      ? `Imported ${added} activit${added === 1 ? 'y' : 'ies'}${withRoutes ? `, ${withRoutes} with GPS` : ''}`
+      : 'Nothing new — those activities are already imported');
+    if (failures.length) toast(`Skipped ${failures.length}: ${failures[0]}`, 'error');
+    render();
+  };
+
+  modal = openModal('Import activities', el('div', {},
+    el('p', { class: 'muted' },
+      'Add activities from a .gpx or .tcx export — Polar Flow, Garmin Connect, or anything else that exports. ',
+      'Pick several at once. Re-importing the same file does nothing, so it is safe to retry.'),
+    el('div', { class: 'field' }, el('label', {}, 'Files'), fileInput),
+    statusEl,
+    el('p', { class: 'muted' },
+      'Routes are stored for the heatmap. Distance and duration come from the file when stated, ',
+      'and are otherwise computed from the track. FIT files are not supported.'),
+  ), [
+    { label: 'Cancel', class: 'btn secondary', onClick: () => {} },
+    { label: 'Import', class: 'btn', onClick: () => { run(); return false; }, keepOpen: true },
+  ]);
 }
 
 function blockLabel(type) {
@@ -371,6 +426,10 @@ function renderHistory() {
     plans.map((p) => el('option', { value: p.id, selected: histFilter.planId === p.id }, p.name)),
     el('option', { value: 'adhoc', selected: histFilter.planId === 'adhoc' }, 'Ad-hoc only'),
   );
+  root.appendChild(el('div', { class: 'list-row' },
+    el('h2', {}, 'History'),
+    el('button', { class: 'btn small secondary', onclick: () => importActivitiesModal() }, 'Import GPX/TCX'),
+  ));
   root.appendChild(el('div', { class: 'card' },
     el('div', { class: 'field-row' },
       el('div', { class: 'field', style: 'margin:0' }, el('label', {}, 'From'), fromIn),
@@ -381,7 +440,7 @@ function renderHistory() {
 
   const inRange = (d) => (!histFilter.from || d >= histFilter.from) && (!histFilter.to || d <= histFilter.to);
 
-  // Merge manual logs and Strava activities into one timeline.
+  // Merge manual logs and synced activities into one timeline.
   const items = [];
   for (const log of store.get('logs')) {
     if (!inRange(log.date)) continue;
@@ -390,15 +449,15 @@ function renderHistory() {
     items.push({ kind: 'log', date: log.date, log });
   }
   if (!histFilter.planId || histFilter.planId === 'adhoc') {
-    for (const entry of stravaWithStatus()) {
+    for (const entry of activitiesWithStatus()) {
       if (!inRange(entry.date)) continue;
       if (histFilter.planId === 'adhoc' && entry.matchStatus === 'confirmed') continue;
-      items.push({ kind: 'strava', date: entry.date, entry });
+      items.push({ kind: 'activity', date: entry.date, entry });
     }
   } else {
-    for (const entry of stravaWithStatus()) {
+    for (const entry of activitiesWithStatus()) {
       if (inRange(entry.date) && entry.matchStatus === 'confirmed' && entry.match.planId === histFilter.planId) {
-        items.push({ kind: 'strava', date: entry.date, entry });
+        items.push({ kind: 'activity', date: entry.date, entry });
       }
     }
   }
@@ -410,7 +469,7 @@ function renderHistory() {
   }
   const card = el('div', { class: 'card' });
   for (const item of items) {
-    card.appendChild(item.kind === 'log' ? logRow(item.log, lib, planById) : stravaRow(item.entry, lib, planById));
+    card.appendChild(item.kind === 'log' ? logRow(item.log, lib, planById) : activityRow(item.entry, lib, planById));
   }
   root.appendChild(card);
 }
@@ -429,7 +488,7 @@ function logRow(log, lib, planById) {
   );
 }
 
-function stravaRow(entry, lib, planById) {
+function activityRow(entry, lib, planById) {
   const statusPill = {
     unmatched: ['pill', 'unlinked'],
     suggested: ['pill warn', 'suggested'],
@@ -439,7 +498,7 @@ function stravaRow(entry, lib, planById) {
 
   const row = el('div', { class: 'list-row' },
     el('div', { class: 'row-main' },
-      el('div', { class: 'row-title' }, entry.name || entry.type, ' ', el('span', { class: 'pill' }, 'strava')),
+      el('div', { class: 'row-title' }, entry.name || entry.type, ' ', el('span', { class: 'pill' }, entry.source ?? 'synced')),
       el('div', { class: 'row-sub' }, `${formatDate(entry.date)} · ${actualSummary(entry)}`),
     ),
     el('span', { class: statusPill[0] }, statusPill[1]),
@@ -481,9 +540,9 @@ function describeMatch(match, planById, lib) {
 
 function decideMatch(entry, status) {
   const matches = store.get('matches').slice();
-  const i = matches.findIndex((m) => m.stravaId === entry.stravaId);
+  const i = matches.findIndex((m) => matchActivityId(m) === entry.id);
   if (i >= 0) matches[i] = { ...matches[i], status };
-  else matches.push(makeMatch({ stravaId: entry.stravaId, status }));
+  else matches.push(makeMatch({ activityId: entry.id, status }));
   store.save('matches', matches);
   toast(status === 'confirmed' ? 'Linked to plan' : 'Left as ad-hoc');
 }
@@ -504,10 +563,10 @@ function manualLink(entry) {
       modal.close();
       const matches = store.get('matches').slice();
       const rec = makeMatch({
-        stravaId: entry.stravaId, status: 'confirmed',
+        activityId: entry.id, status: 'confirmed',
         planId: c.planId, sessionId: c.sessionId, plannedExerciseId: c.plannedExerciseId,
       });
-      const i = matches.findIndex((m) => m.stravaId === entry.stravaId);
+      const i = matches.findIndex((m) => matchActivityId(m) === entry.id);
       if (i >= 0) matches[i] = rec;
       else matches.push(rec);
       store.save('matches', matches);
@@ -614,8 +673,8 @@ function renderMetrics() {
 
 function runningActivities() {
   const out = [];
-  for (const e of store.getStravaEntries()) {
-    if (STRAVA_TYPE_MAP[e.type]?.modality === 'run') out.push(e);
+  for (const e of store.getActivityEntries()) {
+    if (sportMapping(e.type).modality === 'run') out.push(e);
   }
   const lib = exById();
   for (const l of store.get('logs')) {
@@ -630,11 +689,11 @@ function runningActivities() {
 function logCount(days) {
   const from = addDays(todayStr(), -days);
   return store.get('logs').filter((l) => l.date >= from).length
-    + store.getStravaEntries().filter((e) => e.date >= from).length;
+    + store.getActivityEntries().filter((e) => e.date >= from).length;
 }
 
 // Planned exercises due in [today-days, today] vs. those actually completed
-// (a linked manual log, or a confirmed Strava match).
+// (a linked manual log, or a confirmed activity match).
 function adherence(days) {
   const from = addDays(todayStr(), -days);
   const to = todayStr();
@@ -723,10 +782,10 @@ function metricSummary(entry) {
 async function renderHeatmap() {
   const container = el('div', { class: 'heatmap-container' }, el('p', { class: 'muted', style: 'padding:16px' }, 'Loading map…'));
   root.appendChild(container);
-  const entries = store.getStravaEntries().filter((e) => e.gpsPolyline);
+  const entries = store.getActivityEntries().filter((e) => e.gpsPolyline);
   if (!entries.length) {
     container.innerHTML = '';
-    container.appendChild(emptyState('No GPS routes yet. They arrive with synced Strava activities.'));
+    container.appendChild(emptyState('No GPS routes yet. Sync Polar, or import a GPX/TCX file from History.'));
     return;
   }
   const mod = await import('./heatmap-view.js');

@@ -15,8 +15,8 @@ token.
 2. **Copy these files in**, preserving the layout:
 
    ```
-   .github/workflows/strava-sync.yml
-   scripts/strava-sync.mjs
+   .github/workflows/polar-sync.yml
+   scripts/polar-sync.mjs
    scripts/crypto.js
    ```
 
@@ -25,59 +25,104 @@ token.
 3. **Create a fine-grained token** (GitHub → Settings → Developer settings →
    Fine-grained tokens): repository access limited to **only this repo**,
    with **Contents: Read and write**, plus **Actions: Read and write** if you
-   want the app's "Sync Strava now" button.
+   want the app's "Sync activities now" button.
 4. **Point the app at it**: open the app → ⚙ Settings → Data repository →
    enter the owner, repo name, and branch (`main`) → Save → paste the token.
    Then press **Upload all local data** once to seed this repo from the
    browser you have been using.
 
-## Strava sync (optional)
+## Polar sync (optional)
 
-The sync workflow lives here because it writes into `data/strava/`. Add these
-repo secrets (Settings → Secrets and variables → Actions):
+The sync workflow lives here because it writes into `data/activities/`.
+Polar's AccessLink API is free — no subscription, no approval gate. (The app
+used Strava until June 2026, when Strava put its API behind a $11.99/month
+subscription.)
 
-| Secret | Where it comes from |
+### One-time OAuth bootstrap
+
+1. Sign in at <https://admin.polaraccesslink.com> with your Polar Flow
+   account and create a client. Note the **Client ID** and **Client Secret**.
+   Set the redirect URI to `http://localhost`.
+2. Authorize your own client — open this in a browser, with your client id:
+
+   ```
+   https://flow.polar.com/oauth2/authorization?response_type=code&client_id=CLIENT_ID
+   ```
+
+   Approve; you land on `http://localhost/?code=AUTH_CODE`. Copy the code.
+3. Exchange it for an access token. The token endpoint uses HTTP Basic auth
+   with your client id and secret:
+
+   ```sh
+   curl -X POST https://polarremote.com/v2/oauth2/token \
+     -u 'CLIENT_ID:CLIENT_SECRET' \
+     -H 'Content-Type: application/x-www-form-urlencoded' \
+     -d 'grant_type=authorization_code&code=AUTH_CODE&redirect_uri=http://localhost'
+   ```
+
+   The response contains `access_token` and `x_user_id`. Keep both.
+4. Register the user with your client — **required once**, and it is what
+   starts making data available:
+
+   ```sh
+   curl -X POST https://www.polaraccesslink.com/v3/users \
+     -H "Authorization: Bearer ACCESS_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"member-id": "anything-you-like"}'
+   ```
+
+   A `409 Conflict` here just means the user is already registered — fine.
+5. Add repo secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
 |---|---|
-| `STRAVA_CLIENT_ID` | strava.com/settings/api |
-| `STRAVA_CLIENT_SECRET` | strava.com/settings/api |
-| `STRAVA_REFRESH_TOKEN` | the one-time OAuth exchange in the app repo's README |
+| `POLAR_ACCESS_TOKEN` | `access_token` from step 3 |
+| `POLAR_USER_ID` | `x_user_id` from step 3 |
 | `ENCRYPTION_PASSWORD` | only if you enabled encryption in the app |
 
 The workflow then runs every four hours, and on demand from the Actions tab or
-the app's "Sync Strava now" button.
+the app's "Sync activities now" button.
+
+If the token is ever revoked (e.g. you remove the app in Polar Flow), the run
+fails with a message telling you to redo this bootstrap.
 
 ### How much gets pulled
 
-By default the **first run records today as a baseline** and syncs nothing
-historical — so connecting Strava doesn't drag in years of activities. From
-then on each run fetches only what's new, plus a 7-day overlap so late watch
-uploads aren't missed. Everything is deduped by activity id, so re-runs are
-no-ops.
+**Polar only exposes the last ~30 days**, and only exercises uploaded after
+your client was registered. There is no historical backfill through the API at
+all — so there is no date-floor setting, and nothing before setup will appear.
+To bring in older activities, or anything from another device, use
+**Logs → History → Import GPX/TCX** in the app instead.
 
-To change that, add repo **variables** (Settings → Secrets and variables →
-Actions → *Variables* tab — these aren't secrets):
+Each run lists what is available, skips exercises it has already stored
+(tracked by id in `sync-state.json`), and is therefore safe to re-run.
+
+Optional repo **variables** (Settings → Secrets and variables → Actions →
+*Variables* tab — these are not secrets):
 
 | Variable | Default | Effect |
 |---|---|---|
-| `STRAVA_SYNC_AFTER` | unset | `YYYY-MM-DD` floor. Nothing older is ever fetched. Set it to a past date to backfill history — the next run detects the earlier floor and pulls from there. |
-| `STRAVA_SYNC_TYPES` | unset = all types | Comma-separated `sport_type` allowlist, e.g. `Run,TrailRun,Ride`. Filtered activities are skipped, not stored. |
-| `STRAVA_MAX_PAGES` | `20` | Page cap, 100 activities per page. The run logs a warning if it hits the cap, so truncation is never silent. |
+| `SYNC_TYPES` | unset = all sports | Comma-separated Polar sport allowlist, e.g. `RUNNING,CYCLING`. |
+| `SYNC_MAX_ACTIVITIES` | `200` | Per-run cap. A warning is logged if there were more, so nothing is silently dropped. |
 
-Backfilling a long history can exceed the page cap in one run. The warning in
-the log tells you when that happened; run it again, or raise the cap.
+### A note on Polar's transaction model
 
-To check it works: Actions → Strava sync → Run workflow. A successful run
-either commits new activities to `data/strava/activities-YYYY-MM.json` or logs
-"No new activities". If your shards are encrypted and `ENCRYPTION_PASSWORD` is
-missing, the run fails loudly rather than writing mixed plaintext.
+Some Polar endpoints *discard* data once a transaction is committed. The script
+only ever commits **after** the shards have been written to disk, so a crash
+mid-run means the next run re-fetches rather than losing an activity.
 
 ## What ends up here
 
 ```
-data/plans.json        data/exercises.json    data/matches.json
-data/logs.json         data/metrics.json      data/goals.json
-data/strava/state.json data/strava/activities-YYYY-MM.json
+data/plans.json          data/exercises.json   data/matches.json
+data/logs.json           data/metrics.json     data/goals.json
+data/activities/sync-state.json                 # written by the workflow
+data/activities/activities-YYYY-MM.json         # written by the workflow
+data/imported/imported-YYYY-MM.json             # written by the app's import
 ```
+
+Each file has exactly one writer — the workflow owns `data/activities/`, the
+browser owns everything else — so the two can never conflict.
 
 The app creates these on first sync — you do not need to make them yourself.
 

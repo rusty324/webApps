@@ -160,7 +160,7 @@ function tokenSection(reopen) {
     body: el('div', {},
       el('p', { class: 'muted' },
         'A fine-grained personal access token scoped to only your private data repo, with ',
-        'Contents read/write (plus Actions read/write for Strava sync). ',
+        'Contents read/write (plus Actions read/write for the activity sync button). ',
         'It needs no access to the public repo that serves this app.'),
       el('div', { class: 'field' }, el('label', {}, 'Personal access token'), patInput),
       el('div', { class: 'field-row' },
@@ -181,8 +181,8 @@ function tokenSection(reopen) {
   };
 }
 
-// Triggers the workflow that lives in the DATA repo, not this one.
-function stravaSection() {
+// Triggers the Polar sync workflow, which lives in the DATA repo, not this one.
+function activitySyncSection() {
   const blocker = syncBlocker();
   const syncBtn = el('button', {
     class: 'btn secondary',
@@ -190,20 +190,21 @@ function stravaSection() {
     onclick: async () => {
       try {
         await store.client.dispatchWorkflow(SYNC_WORKFLOW_FILE);
-        toast('Strava sync triggered — new activities land in a minute or two');
-        pollStrava();
+        toast('Sync triggered — new activities land in a minute or two');
+        pollActivities();
       } catch (e) {
         toast(`Could not trigger sync: ${e.message}`, 'error');
       }
     },
-  }, 'Sync Strava now');
+  }, 'Sync activities now');
 
   return {
     state: blocker ? 'needs setup' : 'ready',
     body: el('div', {},
       el('p', { class: 'muted' },
-        'Strava syncs on a schedule from a workflow in your data repo — this button just runs it now. ',
-        'It needs the Strava secrets set up there first; see datarepo-template/README.md.'),
+        'Polar activities sync on a schedule from a workflow in your data repo — this button just runs ',
+        'it now. It needs the Polar credentials set up there first; see datarepo-template/README.md. ',
+        'You can also import GPX/TCX files directly from Logs → History, with no API at all.'),
       syncBtn,
       blocker ? el('p', { class: 'muted', style: 'margin:6px 0 0' }, blocker) : null,
     ),
@@ -263,7 +264,7 @@ function privacySection(reopen) {
           ? 'Some synced files are encrypted and the password is missing or wrong — enter it below to unlock.'
           : enabled
             ? 'Logs, body metrics, goals, and GPS data are encrypted in the repo. '
-              + 'Set the same password as the ENCRYPTION_PASSWORD Actions variable in your data repo for Strava sync.'
+              + 'Set the same password as the ENCRYPTION_PASSWORD secret in your data repo so the sync can read it.'
             : 'Optional second layer: encrypt logs, body metrics, goals, and GPS data before they are '
               + 'committed. Plans and the exercise library stay readable.'),
       el('div', { class: 'field' }, el('label', {}, 'Encryption password'), pwInput),
@@ -340,7 +341,7 @@ function openSettings({ openSection = null } = {}) {
   const specs = [
     { id: 'datarepo', name: 'Data repository', ...dataRepoSection(reopen) },
     { id: 'token', name: 'GitHub token', ...tokenSection(reopen) },
-    { id: 'strava', name: 'Strava sync', ...stravaSection() },
+    { id: 'activitysync', name: 'Activity sync', ...activitySyncSection() },
     { id: 'privacy', name: 'Privacy', ...privacySection(reopen) },
     { id: 'units', name: 'Units', ...unitsSection() },
     { id: 'templates', name: 'Plan templates', ...templatesSection() },
@@ -376,23 +377,23 @@ function openSettings({ openSection = null } = {}) {
       repoDone ? `${repoCfg.owner}/${repoCfg.repo}` : 'not set — tap to configure', 'datarepo'),
     checkRow('GitHub token', tokenDone,
       tokenDone ? 'saved in this browser' : 'not set — tap to add', 'token'),
-    checkRow('Strava sync', false,
-      syncBlocker() ? 'optional — needs the two above' : 'optional — ready to run', 'strava'),
+    checkRow('Activity sync', false,
+      syncBlocker() ? 'optional — needs the two above' : 'optional — ready to run', 'activitysync'),
   );
 
   modal = openModal('Settings', el('div', {}, checklist, sectionEls),
     [{ label: 'Close', class: 'btn secondary', onClick: () => {} }]);
 }
 
-// After a manual workflow dispatch, watch for new Strava data for ~2 minutes.
-function pollStrava() {
+// After a manual workflow dispatch, watch for new activity data for ~2 minutes.
+function pollActivities() {
   let tries = 0;
   const timer = setInterval(async () => {
     tries++;
-    const changed = await store.refreshStrava().catch(() => false);
+    const changed = await store.refreshActivities().catch(() => false);
     if (changed || tries >= 8) {
       clearInterval(timer);
-      if (changed) toast('New Strava activities synced');
+      if (changed) toast('New activities synced');
     }
   }, 15000);
 }

@@ -1,5 +1,5 @@
 // Unit preferences and conversions. Stored data is ALWAYS canonical metric
-// (kg, meters, sec/km, cm) — matching the Strava sync and keeping exported
+// (kg, meters, sec/km, cm) — matching the activity sync and keeping exported
 // templates portable. These helpers convert at the UI edge only; the
 // preference lives in this browser's localStorage like the PAT does.
 

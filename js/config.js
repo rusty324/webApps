@@ -25,7 +25,7 @@ export const APP_REPO = {
 export const DATA_REPO_DEFAULT = null;
 
 // Data files, relative to repo root. The browser owns all of these.
-// data/strava/** is owned by the Actions sync workflow and is read-only here.
+// data/activities/** is owned by the Polar sync workflow and is read-only here.
 export const DATA_FILES = {
   plans: 'data/plans.json',
   exercises: 'data/exercises.json',
@@ -34,32 +34,69 @@ export const DATA_FILES = {
   matches: 'data/matches.json',
   goals: 'data/goals.json',
 };
-export const STRAVA_DIR = 'data/strava';
+// Synced activities, split by writer so the two can never conflict:
+//   ACTIVITY_DIR — written only by the Polar sync workflow (Actions)
+//   IMPORT_DIR   — written only by the browser (GPX/TCX file import)
+//   LEGACY_STRAVA_DIR — read-only; Strava paywalled its API in June 2026, so
+//                       the pipeline is gone, but old shards still display.
+export const ACTIVITY_DIR = 'data/activities';
+export const IMPORT_DIR = 'data/imported';
+export const LEGACY_STRAVA_DIR = 'data/strava';
 
 // Exercise taxonomy, aligned with the fitness-tracker-plan v2 schema.
 export const CATEGORIES = ['cardio', 'strength', 'mobility', 'plyometric', 'skill', 'other'];
 export const MODALITIES = ['run', 'walk', 'bike', 'swim', 'row', 'bodyweight', 'barbell', 'dumbbell', 'machine', 'band', 'stretch', 'mobility', 'other'];
 export const MEASUREMENT_TYPES = ['reps', 'duration', 'distance', 'intervals'];
 
-// Strava activity type -> exercise taxonomy, for fuzzy matching. When a
-// modality is given the matcher prefers it; category is the fallback.
-export const STRAVA_TYPE_MAP = {
-  Run: { category: 'cardio', modality: 'run' },
-  TrailRun: { category: 'cardio', modality: 'run' },
-  VirtualRun: { category: 'cardio', modality: 'run' },
-  Walk: { category: 'cardio', modality: 'walk' },
-  Hike: { category: 'cardio', modality: 'walk' },
-  Ride: { category: 'cardio', modality: 'bike' },
-  MountainBikeRide: { category: 'cardio', modality: 'bike' },
-  GravelRide: { category: 'cardio', modality: 'bike' },
-  VirtualRide: { category: 'cardio', modality: 'bike' },
-  EBikeRide: { category: 'cardio', modality: 'bike' },
-  Rowing: { category: 'cardio', modality: 'row' },
-  Swim: { category: 'cardio', modality: 'swim' },
-  WeightTraining: { category: 'strength' },
-  Workout: { category: 'strength' },
-  Crossfit: { category: 'strength' },
+// Sport type -> exercise taxonomy, for fuzzy matching. When a modality is
+// given the matcher prefers it; category is the fallback. Keys are looked up
+// case-insensitively (see sportMapping below) because Polar uses
+// UPPER_SNAKE_CASE, Strava used PascalCase, and imported GPX/TCX files carry
+// whatever their exporter wrote.
+export const SPORT_TYPE_MAP = {
+  // Polar
+  running: { category: 'cardio', modality: 'run' },
+  treadmill_running: { category: 'cardio', modality: 'run' },
+  trail_running: { category: 'cardio', modality: 'run' },
+  road_running: { category: 'cardio', modality: 'run' },
+  walking: { category: 'cardio', modality: 'walk' },
+  hiking: { category: 'cardio', modality: 'walk' },
+  cycling: { category: 'cardio', modality: 'bike' },
+  indoor_cycling: { category: 'cardio', modality: 'bike' },
+  mountain_biking: { category: 'cardio', modality: 'bike' },
+  swimming: { category: 'cardio', modality: 'swim' },
+  pool_swimming: { category: 'cardio', modality: 'swim' },
+  open_water_swimming: { category: 'cardio', modality: 'swim' },
+  rowing: { category: 'cardio', modality: 'row' },
+  indoor_rowing: { category: 'cardio', modality: 'row' },
+  strength_training: { category: 'strength' },
+  functional_training: { category: 'strength' },
+  other_indoor: { category: 'other' },
+  other_outdoor: { category: 'cardio' },
+  // Strava / generic exporters (legacy shards and imported files)
+  run: { category: 'cardio', modality: 'run' },
+  trailrun: { category: 'cardio', modality: 'run' },
+  virtualrun: { category: 'cardio', modality: 'run' },
+  walk: { category: 'cardio', modality: 'walk' },
+  hike: { category: 'cardio', modality: 'walk' },
+  ride: { category: 'cardio', modality: 'bike' },
+  mountainbikeride: { category: 'cardio', modality: 'bike' },
+  gravelride: { category: 'cardio', modality: 'bike' },
+  virtualride: { category: 'cardio', modality: 'bike' },
+  ebikeride: { category: 'cardio', modality: 'bike' },
+  biking: { category: 'cardio', modality: 'bike' },
+  swim: { category: 'cardio', modality: 'swim' },
+  weighttraining: { category: 'strength' },
+  workout: { category: 'strength' },
+  crossfit: { category: 'strength' },
 };
+
+// Case- and separator-insensitive lookup, so "TREADMILL_RUNNING",
+// "Treadmill running", and "treadmill-running" all resolve.
+export function sportMapping(type) {
+  const key = String(type ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return SPORT_TYPE_MAP[key] ?? { category: 'other' };
+}
 
 // Fuzzy matcher: how many days a plan session may differ from the
 // activity date and still be considered a candidate.
@@ -81,7 +118,7 @@ export const RUN_GOAL_PRESETS = [
   { label: 'Marathon', distanceM: 42195 },
 ];
 
-export const SYNC_WORKFLOW_FILE = 'strava-sync.yml';
+export const SYNC_WORKFLOW_FILE = 'polar-sync.yml';
 
 // Body metrics the Metrics view can record. Adding a metric here is all
 // that's needed — the entry modal, charts, and history list derive from it.
