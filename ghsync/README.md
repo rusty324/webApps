@@ -141,6 +141,10 @@ There is no recovery: a lost password means unreadable data. Say so in your UI.
 4. Point the app at a **new private repo** (a second app should not share the
    first one's data repo, since `pushAllData` seeds the whole `data/` tree).
 
+Working on this with an AI assistant? `CLAUDE.md` in this folder is the
+agent-facing version — the integration recipe, the invariants that must hold,
+and the failure modes — and Claude Code loads it automatically.
+
 Files: `store.js` (core) · `github-api.js` (Contents API client) · `cache.js`
 (namespaced localStorage) · `crypto.js` (isomorphic AES-GCM) · `settings-ui.js`
 (drop-in panel) · `ghsync.css` · `example/`.
