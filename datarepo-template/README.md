@@ -127,6 +127,7 @@ browser owns everything else — so the two can never conflict.
 
 The app creates these on first sync — you do not need to make them yourself.
 
-`scripts/crypto.js` is a byte-identical copy of `js/crypto.js` in the app
+`scripts/crypto.js` is a byte-identical copy of `ghsync/crypto.js` in the app
 repo, so the workflow can read and write the same encrypted format the browser
-uses. If you ever update one, update both.
+uses. If you ever update one, update both — `tests/crypto-drift.mjs` in the app
+repo fails if they diverge.

@@ -1,10 +1,9 @@
-// Thin GitHub Contents API client. Auth is a fine-grained PAT scoped to the
-// single private data repo, kept in localStorage and never rendered back
-// into the DOM. The repo it targets is configured at runtime — see
-// store.js getDataRepo() and README → "Where your data lives".
+// Thin GitHub Contents API client. Auth is a fine-grained PAT scoped to a
+// single private data repo, kept in localStorage and never rendered back into
+// the DOM. The repo it targets is configured at runtime, so a user can point
+// the app at their own repo without a redeploy.
 
 const API = 'https://api.github.com';
-const PAT_KEY = 'ft.pat';
 
 export class NotConfiguredError extends Error {
   constructor() {
@@ -34,22 +33,18 @@ export class NotFoundError extends Error {
   }
 }
 
-export function getToken() {
-  return localStorage.getItem(PAT_KEY) || '';
-}
-export function setToken(t) {
-  if (t) localStorage.setItem(PAT_KEY, t.trim());
-  else localStorage.removeItem(PAT_KEY);
-}
-export function hasToken() {
-  return !!getToken();
-}
-
-function headers() {
+// The PAT lives under a per-app key so two ghsync apps on the same origin
+// keep separate tokens (they usually have separate data repos).
+export function createTokenStore(tokenKey) {
   return {
-    Authorization: `Bearer ${getToken()}`,
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
+    get: () => localStorage.getItem(tokenKey) || '',
+    set(t) {
+      if (t) localStorage.setItem(tokenKey, t.trim());
+      else localStorage.removeItem(tokenKey);
+    },
+    has() {
+      return !!(localStorage.getItem(tokenKey) || '');
+    },
   };
 }
 
@@ -61,7 +56,7 @@ async function check(res, path) {
   throw new Error(`GitHub API ${res.status} for ${path}`);
 }
 
-// UTF-8-safe base64 helpers (btoa alone breaks on non-ASCII notes).
+// UTF-8-safe base64 helpers (btoa alone breaks on non-ASCII text).
 function b64encode(str) {
   return btoa(String.fromCharCode(...new TextEncoder().encode(str)));
 }
@@ -73,9 +68,16 @@ function b64decode(b64) {
 // repoCfgOrGetter: either a {owner, repo, branch} object or a function
 // returning one. The getter form lets Settings retarget the data repo
 // without a reload, since every call re-reads the current config.
-export function makeClient(repoCfgOrGetter) {
+// tokens: a token store from createTokenStore().
+export function makeClient(repoCfgOrGetter, tokens) {
+  const headers = () => ({
+    Authorization: `Bearer ${tokens.get()}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  });
+  const raw = () => (typeof repoCfgOrGetter === 'function' ? repoCfgOrGetter() : repoCfgOrGetter);
   const cfg = () => {
-    const c = typeof repoCfgOrGetter === 'function' ? repoCfgOrGetter() : repoCfgOrGetter;
+    const c = raw();
     if (!c?.owner || !c?.repo) throw new NotConfiguredError();
     return { branch: 'main', ...c };
   };
@@ -91,7 +93,7 @@ export function makeClient(repoCfgOrGetter) {
       }
     },
     target() {
-      const c = typeof repoCfgOrGetter === 'function' ? repoCfgOrGetter() : repoCfgOrGetter;
+      const c = raw();
       return c?.owner && c?.repo ? { branch: 'main', ...c } : null;
     },
     // -> { content: string, sha } ; throws NotFoundError if absent
@@ -129,7 +131,8 @@ export function makeClient(repoCfgOrGetter) {
       return Array.isArray(json) ? json.map(({ name, path: p, sha }) => ({ name, path: p, sha })) : [];
     },
 
-    // Fire the activity sync workflow via workflow_dispatch (PAT needs Actions:write).
+    // Run a workflow in the data repo via workflow_dispatch. Only needed by
+    // apps whose data repo has Actions; the PAT then also needs Actions:write.
     async dispatchWorkflow(workflowFile) {
       const res = await fetch(
         `${API}/repos/${cfg().owner}/${cfg().repo}/actions/workflows/${workflowFile}/dispatches`,

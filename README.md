@@ -203,23 +203,52 @@ the UI is tested. To test the sync script locally, from a checkout of your data
 repo (or `datarepo-template/`):
 
 ```sh
-STRAVA_CLIENT_ID=… STRAVA_CLIENT_SECRET=… STRAVA_REFRESH_TOKEN=… \
-  node scripts/polar-sync.mjs
+POLAR_ACCESS_TOKEN=… POLAR_USER_ID=… node scripts/polar-sync.mjs
 ```
+
+### Tests
+
+```sh
+node tests/run.mjs              # everything
+node tests/run.mjs app-settings # one suite
+```
+
+The runner starts its own static server and drives the real pages in Chromium
+(Playwright, local or global install). `tests/ghsync-package.mjs` exercises the
+storage package on its own through `ghsync/example/`, so a regression there is
+caught independently of this app.
 
 ### Layout
 
 | Path | What |
 |---|---|
+| `ghsync/` | **Reusable** private-data-repo sync package — see below |
 | `js/config.js` | Tab registry, sport type→category map, data file paths |
 | `js/gps.js` | GPX/TCX parsing, track downsampling, polyline encoding |
-| `js/storage/` | GitHub Contents API client, localStorage cache, store |
+| `js/storage/store.js` | This app's layer on ghsync: collections, activity shards |
 | `js/ui/` | Tab modules (plans, logs, library, heatmap) + shared components |
 | `js/matcher.js` | Fuzzy matcher (pure functions) |
-| `js/crypto.js` | PBKDF2 + AES-GCM, shared byte-for-byte with the data repo |
 | `presets/` | Bundled starter plans and exercise packs (public, non-personal) |
 | `datarepo-template/` | Files to copy into your private data repo |
+| `tests/` | Playwright suites + the runner (`node tests/run.mjs`) |
 | `vendor/` | Vendored Leaflet, leaflet.heat, polyline decoder |
+
+### Reusing the sync layer in another site
+
+Everything that makes "public Pages site, private data repo" work — the
+Contents API client, the localStorage cache, the offline queue, conflict
+merging, AES-GCM encryption, and the Settings panel for the repo/token/password
+— lives in **[`ghsync/`](ghsync/README.md)** and knows nothing about fitness.
+Copy that one folder into another GitHub Pages project, call `createStore()`
+with your own collections, and render `syncSections()` somewhere:
+
+```js
+const store = createStore({ appId: 'notes', files: { notes: 'data/notes.json' } });
+```
+
+`ghsync/example/` is a complete working app built that way. This tracker is
+just its largest consumer: `js/storage/store.js` is the app-specific layer on
+top. Give each app its own `appId` and its own private data repo.
 
 **This repo contains no personal data and no `data/` folder** — `/data/` is
 gitignored so a local experiment can't add one. Everything personal lives in

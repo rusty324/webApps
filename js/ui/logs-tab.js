@@ -38,8 +38,17 @@ export function mount(elRoot, appCtx) {
 
 export function unmount() {
   unsub?.();
-  heatmapMod?.destroy?.();
+  destroyHeatmap();
   root = null;
+}
+
+// Idempotent: render() runs on every store change, and destroying a Leaflet
+// map twice throws ("Map container is being reused"), which used to abort
+// whatever write triggered the re-render.
+function destroyHeatmap() {
+  const mod = heatmapMod;
+  heatmapMod = null;
+  mod?.destroy?.();
 }
 
 // Persist fresh suggestions so they survive reloads and are never recomputed
@@ -57,7 +66,7 @@ function runMatcher() {
 
 function render() {
   if (!root) return;
-  heatmapMod?.destroy?.();
+  destroyHeatmap();
   root.innerHTML = '';
   const segs = [
     ['today', 'Today'],
@@ -909,5 +918,9 @@ async function renderHeatmap() {
     return;
   }
   const mod = await import('./heatmap-view.js');
-  heatmapMod = await mod.show(container, entries);
+  if (!container.isConnected) return; // switched away while Leaflet loaded
+  const instance = await mod.show(container, entries);
+  // A re-render may have replaced the container while the map was building.
+  if (container.isConnected) heatmapMod = instance;
+  else instance.destroy();
 }

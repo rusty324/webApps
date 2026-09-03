@@ -55,8 +55,11 @@ export async function show(container, entries) {
   L.heatLayer(points, { radius: 8, blur: 12, minOpacity: 0.35 }).addTo(map);
   map.fitBounds(bounds.pad(0.1));
 
+  let removed = false;
   return {
     destroy() {
+      if (removed) return; // Leaflet throws if a map is removed twice
+      removed = true;
       map.remove();
     },
   };
