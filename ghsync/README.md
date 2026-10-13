@@ -145,6 +145,12 @@ Working on this with an AI assistant? `CLAUDE.md` in this folder is the
 agent-facing version — the integration recipe, the invariants that must hold,
 and the failure modes — and Claude Code loads it automatically.
 
+**Upgrading an older copy:** copies taken before October 2026 could commit a
+literal `null` for an empty collection and then sit on "pending sync"
+indefinitely. Replace `store.js`, `github-api.js`, and `settings-ui.js`; repos
+and browsers already in that state recover on their own. `CLAUDE.md` →
+"Upgrading a copy" has the details.
+
 Files: `store.js` (core) · `github-api.js` (Contents API client) · `cache.js`
 (namespaced localStorage) · `crypto.js` (isomorphic AES-GCM) · `settings-ui.js`
 (drop-in panel) · `ghsync.css` · `example/`.

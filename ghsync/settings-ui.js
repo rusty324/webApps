@@ -33,13 +33,16 @@ export function syncBlocker(store) {
 }
 
 // Header badge text/class for the current sync state.
+// `title` carries the underlying error, for a tooltip — a badge that only
+// ever says "sync error" or "pending sync" is undiagnosable.
 export function badgeState(store) {
-  const { status } = store.syncStatus();
-  if (store.encryption().locked) return { text: '🔒 locked', cls: 'error' };
-  if (status === 'local') return { text: 'local only', cls: '' };
-  if (status === 'pending') return { text: 'pending sync', cls: 'pending' };
-  if (status === 'error') return { text: 'sync error', cls: 'error' };
-  return { text: 'synced', cls: 'ok' };
+  const { status, error } = store.syncStatus();
+  const title = error?.message ?? '';
+  if (store.encryption().locked) return { text: '🔒 locked', cls: 'error', title };
+  if (status === 'local') return { text: 'local only', cls: '', title };
+  if (status === 'pending') return { text: 'pending sync', cls: 'pending', title };
+  if (status === 'error') return { text: 'sync error', cls: 'error', title };
+  return { text: 'synced', cls: 'ok', title: '' };
 }
 
 /**
@@ -65,6 +68,7 @@ export function syncSections({ store, toast, onChange = () => {}, reopen = () =>
     const branchInput = h('input', { value: current?.branch ?? 'main', placeholder: 'main' });
 
     const blocker = syncBlocker(store);
+    const { error: lastError } = store.syncStatus();
     const seedBtn = h('button', {
       class: 'btn secondary',
       disabled: !!blocker,
@@ -125,6 +129,7 @@ export function syncSections({ store, toast, onChange = () => {}, reopen = () =>
           ? h('p', { class: 'muted', style: 'margin:6px 0 0' }, `Upload needs a token too. ${blocker}`)
           : h('p', { class: 'muted', style: 'margin:6px 0 0' },
               'Press “Upload all local data” once, right after connecting a new repo, to seed it from this browser.'),
+        lastError ? h('p', { class: 'muted sync-error' }, `Last sync error: ${lastError.message}`) : null,
         t.appRepoNote ? h('p', { class: 'muted' }, t.appRepoNote) : null,
       ),
     };

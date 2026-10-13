@@ -9,10 +9,11 @@ import { loadPreset } from './presets.js';
 const badge = document.getElementById('sync-badge');
 
 function renderBadge() {
-  const { text, cls } = badgeState(store);
+  const { text, cls, title } = badgeState(store);
   badge.hidden = false;
   badge.className = 'sync-badge';
   badge.textContent = text;
+  badge.title = title;
   if (cls) badge.classList.add(cls);
 }
 

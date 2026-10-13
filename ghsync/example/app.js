@@ -20,9 +20,10 @@ function toast(message, type = '') {
 }
 
 function renderBadge() {
-  const { text, cls } = badgeState(store);
+  const { text, cls, title } = badgeState(store);
   $('badge').className = `gh-badge ${cls}`;
   $('badge').textContent = text;
+  $('badge').title = title; // the underlying error, if there is one
 }
 
 function renderNotes() {

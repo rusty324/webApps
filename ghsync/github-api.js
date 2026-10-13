@@ -32,6 +32,38 @@ export class NotFoundError extends Error {
     this.path = path;
   }
 }
+// The request never got an HTTP response (offline, DNS, CORS, dropped
+// connection). Always worth retrying, so the store reports it as 'pending'.
+export class NetworkError extends Error {
+  constructor(path, cause) {
+    super(`Network error reaching GitHub for ${path}`);
+    this.name = 'NetworkError';
+    this.path = path;
+    this.cause = cause;
+  }
+}
+// Any other non-2xx. `transient` is true for 5xx and 429, which clear on
+// their own; everything else needs a person to look, so the store reports it
+// as 'error' instead of retrying silently under 'pending'.
+export class HttpError extends Error {
+  constructor(status, path) {
+    super(`GitHub API ${status} for ${path}`);
+    this.name = 'HttpError';
+    this.status = status;
+    this.path = path;
+    this.transient = status >= 500 || status === 429;
+  }
+}
+
+// fetch() rejects (with a bare TypeError) only when there was no response at
+// all. Wrapping it is what lets callers tell "offline" from a bug.
+async function request(url, init, path) {
+  try {
+    return await fetch(url, init);
+  } catch (e) {
+    throw new NetworkError(path, e);
+  }
+}
 
 // The PAT lives under a per-app key so two ghsync apps on the same origin
 // keep separate tokens (they usually have separate data repos).
@@ -53,7 +85,7 @@ async function check(res, path) {
   if (res.status === 401 || res.status === 403) throw new AuthError(`GitHub auth failed (${res.status})`);
   if (res.status === 404) throw new NotFoundError(path);
   if (res.status === 409 || res.status === 422) throw new ConflictError(path);
-  throw new Error(`GitHub API ${res.status} for ${path}`);
+  throw new HttpError(res.status, path);
 }
 
 // UTF-8-safe base64 helpers (btoa alone breaks on non-ASCII text).
@@ -98,7 +130,7 @@ export function makeClient(repoCfgOrGetter, tokens) {
     },
     // -> { content: string, sha } ; throws NotFoundError if absent
     async getFile(path) {
-      const res = await fetch(`${base()}/${path}?ref=${cfg().branch}`, { headers: headers() });
+      const res = await request(`${base()}/${path}?ref=${cfg().branch}`, { headers: headers() }, path);
       await check(res, path);
       const json = await res.json();
       return { content: b64decode(json.content), sha: json.sha };
@@ -112,11 +144,11 @@ export function makeClient(repoCfgOrGetter, tokens) {
         branch: cfg().branch,
       };
       if (sha) body.sha = sha;
-      const res = await fetch(`${base()}/${path}`, {
+      const res = await request(`${base()}/${path}`, {
         method: 'PUT',
         headers: { ...headers(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
-      });
+      }, path);
       await check(res, path);
       const json = await res.json();
       return json.content.sha;
@@ -124,7 +156,7 @@ export function makeClient(repoCfgOrGetter, tokens) {
 
     // -> [{ name, path, sha }] ; [] if the directory doesn't exist yet
     async listDir(path) {
-      const res = await fetch(`${base()}/${path}?ref=${cfg().branch}`, { headers: headers() });
+      const res = await request(`${base()}/${path}?ref=${cfg().branch}`, { headers: headers() }, path);
       if (res.status === 404) return [];
       await check(res, path);
       const json = await res.json();
@@ -134,20 +166,21 @@ export function makeClient(repoCfgOrGetter, tokens) {
     // Run a workflow in the data repo via workflow_dispatch. Only needed by
     // apps whose data repo has Actions; the PAT then also needs Actions:write.
     async dispatchWorkflow(workflowFile) {
-      const res = await fetch(
+      const res = await request(
         `${API}/repos/${cfg().owner}/${cfg().repo}/actions/workflows/${workflowFile}/dispatches`,
         {
           method: 'POST',
           headers: { ...headers(), 'Content-Type': 'application/json' },
           body: JSON.stringify({ ref: cfg().branch }),
         },
+        workflowFile,
       );
       await check(res, workflowFile);
     },
 
     // Cheap validity probe for the settings panel.
     async validate() {
-      const res = await fetch(`${API}/repos/${cfg().owner}/${cfg().repo}`, { headers: headers() });
+      const res = await request(`${API}/repos/${cfg().owner}/${cfg().repo}`, { headers: headers() }, 'repo');
       await check(res, 'repo');
       return true;
     },

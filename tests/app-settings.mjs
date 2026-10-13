@@ -91,16 +91,24 @@ step('workflow_dispatch targets the data repo, not the app repo',
     && c.url === 'https://api.github.com/repos/rusty324/my-private-data/actions/workflows/polar-sync.yml/dispatches'),
   gh.calls.map((c) => c.url).join(' | '));
 
-// ---- seeding the repo pushes every collection ----
+// ---- seeding the repo pushes what this browser holds, and nothing else ----
+// The realistic case: data logged while local-only, then a repo connected.
+await page.evaluate(() => {
+  localStorage.setItem('ft.data.data/metrics.json', JSON.stringify([{ id: 'm1', date: '2026-10-01', weight: 80 }]));
+  localStorage.setItem('ft.data.data/logs.json', JSON.stringify([{ id: 'l1', date: '2026-10-01', exerciseId: 'x', actual: {} }]));
+});
 gh.reset();
 await expand('datarepo');
 await page.click('button:has-text("Upload all local data")');
 await page.waitForSelector('.toast:has-text("Uploaded all local data")', { timeout: 15000 });
 const puts = gh.puts().map((c) => c.url.split('/contents/')[1]);
-const expected = ['data/plans.json', 'data/exercises.json', 'data/logs.json', 'data/metrics.json',
-  'data/matches.json', 'data/goals.json', 'data/activity-edits.json'];
-step('upload PUTs every collection incl. activity edits',
-  expected.every((f) => puts.includes(f)), puts.join(', '));
+step('upload sends the collections that hold data',
+  puts.includes('data/metrics.json') && puts.includes('data/logs.json'), puts.join(', '));
+step('and does not create files for collections never written',
+  !['data/goals.json', 'data/matches.json', 'data/activity-edits.json'].some((f) => puts.includes(f)), puts.join(', '));
+step('every uploaded file is a JSON array, never a bare null',
+  puts.every((f) => Array.isArray(JSON.parse(gh.putBody(f)))),
+  puts.map((f) => `${f}=${gh.putBody(f).trim().slice(0, 20)}`).join(', '));
 step('and only ever targets the private repo',
   gh.calls.every((c) => c.url.includes('/rusty324/my-private-data')));
 
@@ -119,7 +127,10 @@ await page.waitForSelector('.settings-section[data-section="privacy"][open]');
 step('privacy summary updates',
   (await page.textContent('.settings-section[data-section="privacy"] .sec-state')) === 'encryption on');
 step('logs are pushed as an envelope', /"format": "ft-encrypted"/.test(gh.putBody('data/logs.json')));
-step('plans stay plaintext', !/ft-encrypted/.test(gh.putBody('data/plans.json')));
+const rewritten = gh.puts().map((c) => c.url.split('/contents/')[1]);
+step('enabling encryption rewrites only encrypted collections that hold data',
+  rewritten.length > 0 && rewritten.every((f) => ['data/logs.json', 'data/metrics.json'].includes(f)),
+  rewritten.join(', '));
 
 // ---- the app's own sections still work ----
 await expand('units');

@@ -80,7 +80,11 @@ Returned:
   `setPassword`, `encryption()` → `{enabled, locked}`.
 - Status — `onChange(fn)` → unsubscribe; `syncStatus()` →
   `{status, error, connected}` where status is `'local' | 'ok' | 'pending' |
-  'error'`; `refreshStatus()`, `canSync()`, `emit(event)`.
+  'error'`; `refreshStatus()`, `canSync()`, `emit(event)`. `'pending'` means
+  queued behind something that clears on its own (offline, 5xx, 429);
+  `'error'` means a person needs to look (bad token, a 4xx, an unreadable
+  file). Both keep the write queued and retrying. `badgeState(store)` returns
+  `{text, cls, title}` — put `title` on the badge, it holds the error message.
   Events: `{type:'changed', collection}` and `{type:'sync-status', status, error}`.
 - Sync — `refresh()`, `flushQueue()`, `rewriteEncryptedFiles(collections?)`,
   `pushAllData()`, `init()`.
@@ -89,8 +93,11 @@ Returned:
   `client`, `cache`, `serializeFile`, `deserializeFile`, `isEncryptedPath`, `files`.
 
 `github-api.js` exports `makeClient`, `createTokenStore`, and the error classes
-`NotConfiguredError`, `AuthError`, `NotFoundError`, `ConflictError` —
-distinguish these by `instanceof`, never by message text.
+`NotConfiguredError`, `AuthError`, `NotFoundError`, `ConflictError`,
+`NetworkError` (no HTTP response at all) and `HttpError` (any other non-2xx,
+with `.status` and `.transient`) — distinguish these by `instanceof`, never by
+message text. Every request goes through `request()`, which is what turns a
+bare `fetch` TypeError into a `NetworkError`; keep new calls on it.
 
 `crypto.js` exports `encryptJson`, `decryptJson`, `isEnvelope`, `DecryptError`.
 It is isomorphic (WebCrypto only), so Node workflows can import the same file.
@@ -118,7 +125,10 @@ It is isomorphic (WebCrypto only), so Node workflows can import the same file.
    Drift means one side silently cannot read the other's files.
 6. **No build step, no CDN, no dependencies.** Pages serves these files
    verbatim. Vendor anything you need instead of adding `<script src=cdn>`.
-7. **Reads are synchronous, writes are not.** `get()` returns the cache
+7. **Never write a bare `null`.** A collection file is always a JSON array.
+   `push()` drops a queued path with no cached data instead of sending it, and
+   reads coerce a remote `null` to `[]`. See "Upgrading a copy" for why.
+8. **Reads are synchronous, writes are not.** `get()` returns the cache
    immediately; `save/upsert/remove` resolve when the push has been *attempted*
    (offline, it queues). Await them before asserting anything about the remote.
 
@@ -156,7 +166,11 @@ Whatever else you change, keep these covered: nothing is sent to GitHub before
 a repo *and* a token exist; every request targets the private repo and never
 the app repo; an offline write queues and flushes on reconnect; a 409 merges
 both sides by id instead of clobbering; encrypted files leave no plaintext in
-the PUT body.
+the PUT body; no PUT body is ever a bare `null`.
+
+`../tests/ghsync-recovery.mjs` covers the stuck-pending bug below — seeding,
+a wedged legacy queue, a `null` already in the repo, permanent vs. network
+errors. It fails against the pre-fix code, which is the point of it.
 
 ## Failure modes you will actually hit
 
@@ -165,8 +179,14 @@ the PUT body.
 - **`{locked: true}` / `encryption().locked`** — a file is encrypted with a
   password this browser doesn't have. ghsync keeps the old cache and old sha
   and retries later; never overwrite a locked file, that destroys data.
-- **Status stuck on `pending`** — the queue is non-empty. Usually offline, an
-  expired token (`AuthError` → `'error'`), or a repo that no longer exists.
+- **Status stuck on `pending`** — the queue is non-empty and the failure is
+  transient: offline, GitHub 5xx, or rate limited (429). Read the badge's
+  `title` / `syncStatus().error` before guessing. If it persists with a
+  non-network error, you have a copy older than the fix below.
+- **`sync error`** — a failure that won't clear on its own: an expired or
+  under-scoped token (`AuthError`), a 4xx (`HttpError`), a merge that hit an
+  encrypted file with no password, or a repo file that isn't a JSON array.
+  The message says which. Writes stay queued and go through once it's fixed.
 - **A deleted record reappearing** — the merge is per id with local winning, so
   a delete on one device can be resurrected by another device's stale copy.
   Accepted trade-off for a single-user tool; use a tombstone field if it
@@ -176,3 +196,34 @@ the PUT body.
   automatic splitting.
 - **GitHub keeps history** — deleting data in the app does not remove it from
   earlier commits. Only deleting the data repo really erases it.
+
+## Upgrading a copy
+
+Copies made before October 2026 have a bug that leaves apps stuck on
+"pending sync". If you're in another repo and see that, or see data files in
+the data repo whose whole content is `null` (with encryption on, envelopes
+that decrypt to `null`), this is it.
+
+**Cause.** Seeding a repo ("Upload all local data") and enabling encryption
+both pushed every collection, including ones never written on that device —
+and an unwritten collection's cache is `null`, so `null` was committed. The
+next push that hit a conflict (a second device, a second tab, or pressing
+Upload again) merged against that file with `for (const r of remote)`, threw
+a TypeError, and `push()` reported every non-auth error as `'pending'`. So
+that one path retried forever with the real error never shown. Other files
+kept syncing, but the badge stayed on "pending" because the queue never
+emptied — which is why it looked like nothing was working.
+
+**Fix.** Replace `store.js`, `github-api.js`, and `settings-ui.js` with the
+current versions; also set `badge.title` from `badgeState()` in the host app.
+No data migration is needed:
+
+- `null` files already in a data repo read as empty, and are overwritten with
+  a real array on the next write to that collection.
+- Browsers with the wedged path still queued clear it on next load: `init()`
+  flushes the queue before refreshing, and `push()` drops queued paths that
+  have no data.
+
+Deleting the `null` files from the data repo by hand also unsticks an old
+copy (the merge treats a missing file as empty), but its next seed or
+encryption change commits them again. Upgrade instead.

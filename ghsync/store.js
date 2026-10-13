@@ -16,11 +16,27 @@
 
 import { createCache } from './cache.js';
 import {
-  makeClient, createTokenStore, ConflictError, NotFoundError, AuthError, NotConfiguredError,
+  makeClient, createTokenStore,
+  ConflictError, NotFoundError, AuthError, NotConfiguredError, NetworkError, HttpError,
 } from './github-api.js';
 import { encryptJson, decryptJson, isEnvelope } from './crypto.js';
 
-export { ConflictError, NotFoundError, AuthError, NotConfiguredError };
+export { ConflictError, NotFoundError, AuthError, NotConfiguredError, NetworkError, HttpError };
+
+// Failures that clear on their own. Anything else — bad credentials, a file
+// we can't parse, a merge we can't do — is reported as 'error' rather than
+// retried forever under 'pending', where nobody would ever see it.
+const isTransient = (e) => e instanceof NetworkError || (e instanceof HttpError && e.transient);
+
+// Collection files hold an array. `null` is what versions before this fix
+// committed for a collection that had never been written — read it as empty so
+// repos that already contain one recover on the next write. Any other shape
+// is a file something else wrote, and overwriting it would lose data.
+function asRecords(data, path) {
+  if (data == null) return [];
+  if (Array.isArray(data)) return data;
+  throw new Error(`${path} in the data repo is not a JSON array — fix or delete it there`);
+}
 
 /**
  * @param {object} opts
@@ -200,6 +216,14 @@ export function createStore(opts) {
   }
 
   async function push(path, collection) {
+    // Nothing cached means nothing to send. Pushing anyway committed a literal
+    // `null`, which later broke merges; older versions also left such paths in
+    // the queue, so clearing them here is what un-sticks those browsers.
+    if (cache.getData(path) == null) {
+      cache.clearDirty(path);
+      refreshStatus();
+      return;
+    }
     if (!canSync() || !navigator.onLine) {
       setStatus(canSync() ? 'pending' : 'local');
       return;
@@ -221,8 +245,9 @@ export function createStore(opts) {
       }
       throw new Error(`Gave up pushing ${path} after repeated conflicts`);
     } catch (e) {
-      if (e instanceof AuthError) setStatus('error', e);
-      else setStatus('pending', e); // network or transient: stays queued
+      // Either way the path stays queued and is retried; the status only
+      // decides whether the user is told something needs attention.
+      setStatus(isTransient(e) ? 'pending' : 'error', e);
     }
   }
 
@@ -235,7 +260,7 @@ export function createStore(opts) {
       // Locked remote = encrypted under a password we don't have; merging is
       // impossible and overwriting would destroy data. Stay dirty and queued.
       if (res.locked) throw new Error(`Cannot merge ${path}: encrypted with an unknown password`);
-      remote = res.data;
+      remote = asRecords(res.data, path);
       sha = f.sha;
     } catch (e) {
       if (!(e instanceof NotFoundError)) throw e;
@@ -261,31 +286,34 @@ export function createStore(opts) {
 
   async function refresh() {
     if (!canSync() || !navigator.onLine) return;
+    let problem = null;
     try {
       for (const [collection, path] of Object.entries(files)) {
         if (cache.isDirty(path)) continue; // don't clobber unpushed local edits
         try {
           const { content, sha } = await client.getFile(path);
-          if (sha !== cache.getSha(path)) {
-            const res = await deserializeFile(path, JSON.parse(content));
-            if (res.locked) {
-              // Keep the old cache and old sha so we retry once unlocked.
-              emit({ type: 'sync-status', status, error: lastError });
-              continue;
-            }
-            cache.setData(path, res.data);
-            cache.setSha(path, sha);
-            emit({ type: 'changed', collection });
+          if (sha === cache.getSha(path)) continue;
+          const res = await deserializeFile(path, JSON.parse(content));
+          if (res.locked) {
+            // Keep the old cache and old sha so we retry once unlocked.
+            emit({ type: 'sync-status', status, error: lastError });
+            continue;
           }
+          cache.setData(path, asRecords(res.data, path));
+          cache.setSha(path, sha);
+          emit({ type: 'changed', collection });
         } catch (e) {
-          if (!(e instanceof NotFoundError)) throw e; // absent file = empty collection
+          if (e instanceof NotFoundError) continue; // absent file = empty collection
+          if (e instanceof AuthError || isTransient(e)) throw e;
+          problem = e; // one unreadable file shouldn't stop the others syncing
         }
       }
       await onRefresh();
-      if (!cache.getQueue().length) setStatus('ok');
+      if (problem) setStatus('error', problem);
+      else if (!cache.getQueue().length) setStatus('ok');
     } catch (e) {
       if (e instanceof AuthError) setStatus('error', e);
-      // other failures: keep whatever we had cached
+      // network or transient: keep whatever we had cached
     }
   }
 
@@ -337,6 +365,9 @@ export function createStore(opts) {
     if (!canSync()) return; // local mode, or no repo configured yet
     for (const collection of collections) {
       const path = files[collection];
+      // Never written on this device: nothing to upload, and an absent file
+      // already reads as an empty collection everywhere.
+      if (cache.getData(path) == null) continue;
       cache.markDirty(path);
       await push(path, collection);
     }
@@ -377,7 +408,9 @@ export function createStore(opts) {
       }, retryMs);
     }
     setStatus(canSync() ? (cache.getQueue().length ? 'pending' : 'ok') : 'local');
-    refresh(); // fire-and-forget background load
+    // Send anything a previous session left queued before pulling, rather than
+    // leaving the badge on "pending" until the retry timer first fires.
+    flushQueue().finally(() => refresh()); // fire-and-forget background load
   }
 
   return {
