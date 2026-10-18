@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Libby Owned</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>Libby Owned</h1>
+    <p class="lede">Import a list of the books and audiobooks you own. Matching titles get a badge on <a href="https://libbyapp.com" target="_blank" rel="noopener">libbyapp.com</a>.</p>
+
+    <section>
+      <h2>Your library</h2>
+      <p id="status" class="status">No library imported yet.</p>
+      <label id="drop" class="drop">
+        <input id="file" type="file" accept=".csv,.tsv,.txt,.json,application/json,text/csv">
+        <span><strong>Choose a CSV or JSON file</strong> or drop it here. Importing replaces the current list.</span>
+      </label>
+      <div id="result" hidden>
+        <ul id="warnings" class="warnings"></ul>
+      </div>
+      <p><button id="clear" type="button" class="secondary">Clear library</button></p>
+      <details>
+        <summary>Accepted formats</summary>
+        <p>CSV (comma, semicolon or tab separated) with a header row, or JSON: an array of objects. Column/key names are matched loosely:</p>
+        <ul>
+          <li><b>Title</b> (required): <code>title</code>, <code>book title</code>, <code>name</code></li>
+          <li><b>Author</b>: <code>author</code>, <code>authors</code>, <code>written by</code>, <code>additional authors</code></li>
+          <li><b>Narrator</b>: <code>narrator</code>, <code>narrators</code>, <code>narrated by</code>, <code>read by</code></li>
+          <li><b>Format</b> (optional): <code>format</code>, <code>type</code>, <code>binding</code>. Anything containing “audio” is an audiobook.</li>
+        </ul>
+        <p>Without a format column, rows with a narrator are audiobooks and the rest are books. Separate multiple people with <code>;</code>, <code>&amp;</code> or <code>and</code>.</p>
+<pre>title,author,narrator,format
+Project Hail Mary,Andy Weir,Ray Porter,
+The Name of the Wind,Patrick Rothfuss,,ebook</pre>
+      </details>
+    </section>
+
+    <section>
+      <h2>Check a title</h2>
+      <p class="hint">See what the badge would say for a Libby title.</p>
+      <form id="test" class="test">
+        <input name="title" placeholder="Title" required>
+        <input name="author" placeholder="Author">
+        <input name="narrator" placeholder="Narrator (audiobooks)">
+        <select name="type">
+          <option value="audiobook">Libby audiobook</option>
+          <option value="ebook">Libby ebook</option>
+          <option value="">Unknown format</option>
+        </select>
+        <button type="submit">Check</button>
+      </form>
+      <p id="testResult" class="test-result" aria-live="polite"></p>
+    </section>
+
+    <section>
+      <h2>Browse</h2>
+      <input id="filter" type="search" placeholder="Filter by title, author or narrator">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Title</th><th>Author</th><th>Narrator</th><th>Format</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p id="more" class="hint"></p>
+    </section>
+
+    <section>
+      <h2>Troubleshooting</h2>
+      <label class="check"><input id="debug" type="checkbox"> Debug logging: write what the extension captures and badges to the Libby tab’s console (DevTools → Console, filter “Libby Owned”).</label>
+    </section>
+  </main>
+  <script src="../core/text.js"></script>
+  <script src="../core/parse.js"></script>
+  <script src="../core/match.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

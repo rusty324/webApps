@@ -1,0 +1,20 @@
+.libby-owned-badge {
+  display: inline-block;
+  margin: 2px 0 2px 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: 600 11px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: help;
+  color: #fff;
+  background: #2e7d32;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.libby-owned-badge--other-recording {
+  background: #b26a00;
+}
+.libby-owned-badge--other-format {
+  background: #1565c0;
+}

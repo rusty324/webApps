@@ -1,0 +1,169 @@
+// Parse an uploaded CSV / TSV / JSON book list into normalized entries:
+//   { title, authors: string[], narrators: string[], format: 'audiobook' | 'book' }
+(function (root) {
+  'use strict';
+  const NS = (root.LibbyOwned = root.LibbyOwned || {});
+
+  // Header aliases, in priority order. Compared after lowercasing and
+  // stripping everything but letters/digits.
+  const FIELD_ALIASES = {
+    title: ['title', 'booktitle', 'name', 'book', 'bookname'],
+    subtitle: ['subtitle'],
+    author: ['author', 'authors', 'authorname', 'authors1', 'writer', 'writtenby', 'by', 'creator', 'creators', 'authorlf'],
+    extraAuthors: ['additionalauthors', 'coauthors'],
+    narrator: ['narrator', 'narrators', 'narratedby', 'reader', 'readby', 'performer', 'performers', 'narratorname'],
+    format: ['format', 'type', 'mediatype', 'media', 'binding', 'kind'],
+  };
+
+  const headerKey = (h) => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  function detectDelimiter(text) {
+    const firstLine = text.slice(0, text.search(/\r?\n|$/));
+    const counts = { ',': 0, ';': 0, '\t': 0 };
+    let inQuotes = false;
+    for (const ch of firstLine) {
+      if (ch === '"') inQuotes = !inQuotes;
+      else if (!inQuotes && ch in counts) counts[ch]++;
+    }
+    return Object.keys(counts).reduce((a, b) => (counts[b] > counts[a] ? b : a), ',');
+  }
+
+  // RFC 4180-ish CSV parser: quoted fields, doubled quotes, CRLF, BOM.
+  function parseCsv(text, delimiter) {
+    text = String(text).replace(/^﻿/, '');
+    const delim = delimiter || detectDelimiter(text);
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') {
+            field += '"';
+            i++;
+          } else inQuotes = false;
+        } else field += ch;
+      } else if (ch === '"') inQuotes = true;
+      else if (ch === delim) {
+        row.push(field);
+        field = '';
+      } else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = '';
+      } else field += ch;
+    }
+    if (field !== '' || row.length) {
+      row.push(field);
+      rows.push(row);
+    }
+    return rows.filter((r) => r.some((c) => c.trim() !== ''));
+  }
+
+  function resolveColumns(headers) {
+    const keys = headers.map(headerKey);
+    const map = {};
+    for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
+      for (const alias of aliases) {
+        const idx = keys.indexOf(alias);
+        if (idx !== -1) {
+          map[field] = headers[idx];
+          break;
+        }
+      }
+    }
+    return map;
+  }
+
+  function normalizeFormat(value, hasNarrator) {
+    const v = String(value == null ? '' : value).toLowerCase();
+    if (/audio|listen|mp3|m4b|aax|narrat|cd\b/.test(v)) return 'audiobook';
+    if (v.trim()) return 'book';
+    return hasNarrator ? 'audiobook' : 'book';
+  }
+
+  function toEntry(rec, cols) {
+    const get = (f) => (cols[f] ? rec[cols[f]] : undefined);
+    let title = get('title');
+    if (title && typeof title === 'object' && !Array.isArray(title)) title = title.name || title.title;
+    title = String(title == null ? '' : title).trim();
+    if (!title) return null;
+    const subtitle = String(get('subtitle') || '').trim();
+    const authors = [...NS.splitNames(get('author')), ...NS.splitNames(get('extraAuthors'))];
+    const narrators = NS.splitNames(get('narrator'));
+    const entry = {
+      title,
+      authors: [...new Set(authors)],
+      narrators: [...new Set(narrators)],
+      format: normalizeFormat(get('format'), narrators.length > 0),
+    };
+    if (subtitle) entry.subtitle = subtitle;
+    return entry;
+  }
+
+  function findRecordArray(json) {
+    if (Array.isArray(json)) return json;
+    if (json && typeof json === 'object') {
+      for (const v of Object.values(json)) {
+        if (Array.isArray(v) && v.some((x) => x && typeof x === 'object')) return v;
+      }
+    }
+    return null;
+  }
+
+  // Returns { entries, stats: { rows, audiobooks, books, skipped }, columns, warnings }.
+  function parseLibrary(text, filename) {
+    const warnings = [];
+    let records;
+    let headers;
+    const trimmed = String(text).replace(/^﻿/, '').trim();
+    const looksJson = /\.json$/i.test(filename || '') || /^[[{]/.test(trimmed);
+    if (looksJson) {
+      let json;
+      try {
+        json = JSON.parse(trimmed);
+      } catch (e) {
+        throw new Error('Could not parse JSON: ' + e.message);
+      }
+      records = findRecordArray(json);
+      if (!records) throw new Error('JSON must be an array of book objects (or an object containing one).');
+      records = records.filter((r) => r && typeof r === 'object');
+      headers = [...new Set(records.flatMap((r) => Object.keys(r)))];
+    } else {
+      const rows = parseCsv(trimmed);
+      if (rows.length < 2) throw new Error('CSV needs a header row and at least one book.');
+      headers = rows[0].map((h) => h.trim());
+      records = rows.slice(1).map((r) => Object.fromEntries(headers.map((h, i) => [h, r[i] == null ? '' : r[i]])));
+    }
+
+    const columns = resolveColumns(headers);
+    if (!columns.title) throw new Error('No title column found. Headers seen: ' + headers.join(', '));
+    if (!columns.author) warnings.push('No author column found; matching will be much less reliable.');
+
+    const entries = [];
+    const skippedRows = [];
+    records.forEach((rec, i) => {
+      const e = toEntry(rec, columns);
+      if (e) entries.push(e);
+      else skippedRows.push(i + 2);
+    });
+    if (skippedRows.length) warnings.push(`Skipped ${skippedRows.length} row(s) without a title (e.g. row ${skippedRows.slice(0, 5).join(', ')}).`);
+    const noAuthor = entries.filter((e) => !e.authors.length).length;
+    if (columns.author && noAuthor) warnings.push(`${noAuthor} book(s) have no author and can only be matched by title.`);
+
+    const audiobooks = entries.filter((e) => e.format === 'audiobook').length;
+    return {
+      entries,
+      columns,
+      warnings,
+      stats: { rows: records.length, audiobooks, books: entries.length - audiobooks, skipped: skippedRows.length },
+    };
+  }
+
+  Object.assign(NS, { parseCsv, parseLibrary, resolveColumns, normalizeFormat });
+  if (typeof module === 'object' && module.exports) module.exports = NS;
+})(typeof globalThis !== 'undefined' ? globalThis : this);

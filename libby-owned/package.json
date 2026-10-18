@@ -1,0 +1,9 @@
+{
+  "name": "libby-owned",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that marks Libby titles you already own.",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
