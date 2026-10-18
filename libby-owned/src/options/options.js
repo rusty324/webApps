@@ -15,7 +15,15 @@
     } else {
       const s = library.stats;
       const when = new Date(library.importedAt).toLocaleString();
-      $('status').textContent = `${entries.length} titles (${s.audiobooks} audiobooks, ${s.books} books) from ${library.sourceName}, imported ${when}.`;
+      const parts = [
+        [s.audiobooks, 'audiobook'],
+        [s.ebooks, 'ebook'],
+        [s.physical, 'physical'],
+        [s.unspecified != null ? s.unspecified : s.books, 'unspecified format'],
+      ]
+        .filter(([n]) => n)
+        .map(([n, label]) => `${n} ${label}`);
+      $('status').textContent = `${entries.length} titles (${parts.join(', ')}) from ${library.sourceName}, imported ${when}.`;
     }
     renderRows();
   }
@@ -30,7 +38,7 @@
     body.textContent = '';
     for (const e of hits.slice(0, PAGE_SIZE)) {
       const tr = document.createElement('tr');
-      for (const v of [e.title + (e.subtitle ? ': ' + e.subtitle : ''), e.authors.join(', '), e.narrators.join(', '), e.format]) {
+      for (const v of [e.title + (e.subtitle ? ': ' + e.subtitle : ''), e.authors.join(', '), e.narrators.join(', '), (e.formats || [e.format]).join(', ')]) {
         const td = document.createElement('td');
         td.textContent = v;
         tr.appendChild(td);

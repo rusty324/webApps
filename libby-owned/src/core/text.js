@@ -27,19 +27,32 @@
     return t;
   }
 
-  // Returns { full: Set, main } where `full` holds the normalized title (and
-  // title + subtitle when a subtitle is given) and `main` is the part before
-  // the first colon / dash separator.
+  const SEPARATOR = /\s*:\s*|\s+[-–—]\s+/;
+
+  // A subtitle that describes the book ("An Oral History of the Zombie War")
+  // rather than naming a different one ("Alliances", "The Graphic Novel").
+  function isDescriptiveSubtitle(tail) {
+    const t = basicNormalize(tail);
+    if (!t) return true;
+    if (/graphic novel|comic|manga|\bvol(ume)?\b|\bbook\b|\bpart\b|\d/.test(t)) return false;
+    return /^(a|an) /.test(t) || t.split(' ').length >= 5;
+  }
+
+  // Returns { full: Set, main } where `full` holds the normalized whole title
+  // (title + subtitle) and `main` is the part before the first colon / dash.
+  // `main` is null when the subtitle may name a different book (a sequel,
+  // a graphic-novel edition), so only the whole title can match.
   function titleKeys(title, subtitle) {
-    const raw = String(title == null ? '' : title);
+    const raw = String(title == null ? '' : title).replace(/\([^)]*\)|\[[^\]]*\]/g, ' ');
+    const sub = subtitle ? String(subtitle) : '';
     const full = new Set();
-    const add = (s) => {
-      const k = normalizeTitle(s);
-      if (k) full.add(k);
-    };
-    add(raw);
-    if (subtitle) add(raw + ' ' + subtitle);
-    const main = normalizeTitle(raw.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').split(/\s*:\s*|\s+[-–—]\s+/)[0]);
+    const k = normalizeTitle(sub ? raw + ' ' + sub : raw);
+    if (k) full.add(k);
+    const sep = raw.search(SEPARATOR);
+    const head = sep === -1 ? raw : raw.slice(0, sep);
+    const tail = (sep === -1 ? '' : raw.slice(sep).replace(SEPARATOR, '')) + (sub ? ' ' + sub : '');
+    const mainKey = normalizeTitle(head);
+    const main = mainKey && (isDescriptiveSubtitle(tail) || /\d/.test(head)) ? mainKey : null;
     return { full, main };
   }
 
@@ -71,7 +84,8 @@
     if (!s) return [];
     const parts = s
       .split(/\s*(?:;|&|\||\/|\band\b|\bwith\b)\s*/i)
-      .map((p) => p.trim())
+      // "Ken Liu - translator", "Jane Doe (Illustrator)"
+      .map((p) => p.replace(/\s*(?:[-–(]\s*)(?:translator|editor|illustrator|narrator|foreword|introduction)\)?\s*$/i, '').trim())
       .filter(Boolean);
     const out = [];
     for (const p of parts) {

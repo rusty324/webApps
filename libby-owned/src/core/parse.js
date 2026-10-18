@@ -1,5 +1,7 @@
 // Parse an uploaded CSV / TSV / JSON book list into normalized entries:
-//   { title, authors: string[], narrators: string[], format: 'audiobook' | 'book' }
+//   { title, subtitle?, authors: string[], narrators: string[], formats: string[], status? }
+// where formats holds any of 'audiobook', 'ebook', 'physical', or 'book' (a
+// non-audio edition of unknown kind).
 (function (root) {
   'use strict';
   const NS = (root.LibbyOwned = root.LibbyOwned || {});
@@ -12,8 +14,16 @@
     author: ['author', 'authors', 'authorname', 'authors1', 'writer', 'writtenby', 'by', 'creator', 'creators', 'authorlf'],
     extraAuthors: ['additionalauthors', 'coauthors'],
     narrator: ['narrator', 'narrators', 'narratedby', 'reader', 'readby', 'performer', 'performers', 'narratorname'],
-    format: ['format', 'type', 'mediatype', 'media', 'binding', 'kind'],
+    format: ['format', 'formats', 'ownedformats', 'type', 'mediatype', 'media', 'binding', 'kind'],
+    status: ['status', 'readstatus', 'readingstatus', 'exclusiveshelf', 'shelf'],
   };
+
+  const FORMAT_PATTERNS = [
+    ['audiobook', /audio|listen|mp3|m4b|aax|narrat|\bcd\b/],
+    ['ebook', /e-?book|kindle|epub|pdf|digital|nook|kobo/],
+    ['physical', /physical|print|paper|hardcover|hardback|mass market|library binding|board book/],
+  ];
+  const FORMAT_ORDER = ['audiobook', 'ebook', 'physical', 'book'];
 
   const headerKey = (h) => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -79,11 +89,18 @@
     return map;
   }
 
-  function normalizeFormat(value, hasNarrator) {
-    const v = String(value == null ? '' : value).toLowerCase();
-    if (/audio|listen|mp3|m4b|aax|narrat|cd\b/.test(v)) return 'audiobook';
-    if (v.trim()) return 'book';
-    return hasNarrator ? 'audiobook' : 'book';
+  // A format cell may hold several formats: ["physical", "audio"] or "ebook; audio".
+  function normalizeFormats(value, hasNarrator) {
+    const parts = (Array.isArray(value) ? value : String(value == null ? '' : value).split(/[,;|/+]/))
+      .map((v) => String(v == null ? '' : v).toLowerCase().trim())
+      .filter(Boolean);
+    const out = new Set();
+    for (const v of parts) {
+      const hit = FORMAT_PATTERNS.find(([, re]) => re.test(v));
+      out.add(hit ? hit[0] : 'book');
+    }
+    if (!out.size) out.add(hasNarrator ? 'audiobook' : 'book');
+    return FORMAT_ORDER.filter((f) => out.has(f));
   }
 
   function toEntry(rec, cols) {
@@ -99,9 +116,11 @@
       title,
       authors: [...new Set(authors)],
       narrators: [...new Set(narrators)],
-      format: normalizeFormat(get('format'), narrators.length > 0),
+      formats: normalizeFormats(get('format'), narrators.length > 0),
     };
     if (subtitle) entry.subtitle = subtitle;
+    const status = get('status');
+    if (typeof status === 'string' && status.trim()) entry.status = status.trim();
     return entry;
   }
 
@@ -144,26 +163,47 @@
     if (!columns.title) throw new Error('No title column found. Headers seen: ' + headers.join(', '));
     if (!columns.author) warnings.push('No author column found; matching will be much less reliable.');
 
-    const entries = [];
+    // Rows with the same title and authors are merged (formats/narrators combined).
+    const byKey = new Map();
     const skippedRows = [];
     records.forEach((rec, i) => {
       const e = toEntry(rec, columns);
-      if (e) entries.push(e);
-      else skippedRows.push(i + 2);
+      if (!e) {
+        skippedRows.push(i + 2);
+        return;
+      }
+      const key = NS.normalizeTitle(e.title + ' ' + (e.subtitle || '')) + '|' + e.authors.map(NS.surname).sort().join(',');
+      const prev = byKey.get(key);
+      if (!prev) byKey.set(key, e);
+      else {
+        prev.formats = FORMAT_ORDER.filter((f) => prev.formats.includes(f) || e.formats.includes(f));
+        prev.narrators = [...new Set([...prev.narrators, ...e.narrators])];
+      }
     });
+    const entries = [...byKey.values()];
+    const merged = records.length - skippedRows.length - entries.length;
+    if (merged) warnings.push(`Merged ${merged} duplicate row(s) with the same title and author.`);
     if (skippedRows.length) warnings.push(`Skipped ${skippedRows.length} row(s) without a title (e.g. row ${skippedRows.slice(0, 5).join(', ')}).`);
     const noAuthor = entries.filter((e) => !e.authors.length).length;
     if (columns.author && noAuthor) warnings.push(`${noAuthor} book(s) have no author and can only be matched by title.`);
 
-    const audiobooks = entries.filter((e) => e.format === 'audiobook').length;
+    const count = (f) => entries.filter((e) => e.formats.includes(f)).length;
     return {
       entries,
       columns,
       warnings,
-      stats: { rows: records.length, audiobooks, books: entries.length - audiobooks, skipped: skippedRows.length },
+      stats: {
+        rows: records.length,
+        titles: entries.length,
+        audiobooks: count('audiobook'),
+        ebooks: count('ebook'),
+        physical: count('physical'),
+        unspecified: count('book'),
+        skipped: skippedRows.length,
+      },
     };
   }
 
-  Object.assign(NS, { parseCsv, parseLibrary, resolveColumns, normalizeFormat });
+  Object.assign(NS, { parseCsv, parseLibrary, resolveColumns, normalizeFormats });
   if (typeof module === 'object' && module.exports) module.exports = NS;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

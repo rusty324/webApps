@@ -5,8 +5,9 @@
 
   const FUZZY_THRESHOLD = 0.9;
 
+  // Numbers and Roman numerals: "The Force Unleashed II" is not "The Force Unleashed".
   function digits(s) {
-    return (s.match(/\d+/g) || []).join(' ');
+    return (s.match(/\b(?:\d+|[ivx]{1,4})\b/g) || []).join(' ');
   }
 
   // a, b: results of titleKeys(). Exact on full titles, or one side's main
@@ -39,9 +40,16 @@
     return a.some((x) => b.some((y) => x.key === y.key || ((x.single || y.single) && x.surname === y.surname)));
   }
 
+  // Libraries saved by v0.1 had a single `format` of 'audiobook' | 'book'.
+  function formatsOf(entry) {
+    if (Array.isArray(entry.formats) && entry.formats.length) return entry.formats;
+    return [entry.format === 'audiobook' ? 'audiobook' : 'book'];
+  }
+
   function prepare(entry) {
     return {
       entry,
+      formats: new Set(formatsOf(entry)),
       keys: NS.titleKeys(entry.title, entry.subtitle),
       surnames: new Set(entry.authors.map(NS.surname).filter(Boolean)),
       narrators: people(entry.narrators),
@@ -52,7 +60,19 @@
     let s = entry.title;
     if (entry.authors.length) s += ' — ' + entry.authors.join(', ');
     if (entry.narrators.length) s += ' (narr. ' + entry.narrators.join(', ') + ')';
-    return s + ' [' + entry.format + ']';
+    s += ' [' + formatsOf(entry).join(', ') + ']';
+    if (entry.status) s += ' · ' + entry.status;
+    return s;
+  }
+
+  // 'book' is a non-audio edition of unknown kind; it counts as an ebook match.
+  const isEbookLike = (m) => m.formats.has('ebook') || m.formats.has('book');
+
+  function ownedFormats(matches, exclude) {
+    const set = new Set();
+    for (const m of matches) for (const f of m.formats) if (f !== exclude) set.add(f);
+    if (set.has('book') && (set.has('ebook') || set.has('physical'))) set.delete('book');
+    return ['audiobook', 'ebook', 'physical', 'book'].filter((f) => set.has(f));
   }
 
   class OwnedIndex {
@@ -113,14 +133,13 @@
 
   function evaluate(item, matches) {
     if (!matches.length) return null;
-    const audio = matches.filter((m) => m.entry.format === 'audiobook');
-    const books = matches.filter((m) => m.entry.format !== 'audiobook');
+    const audio = matches.filter((m) => m.formats.has('audiobook'));
     const detail = matches.map((m) => describe(m.entry)).join('\n');
     const result = (status, label, ms) => ({ status, label, detail, matches: ms.map((m) => m.entry) });
     const type = item.type;
 
     if (type === 'audiobook') {
-      if (!audio.length) return result('other-format', 'Own as book', books);
+      if (!audio.length) return result('other-format', 'Own ' + ownedFormats(matches, 'audiobook').join(' + '), matches);
       const qn = people(item.narrators);
       if (!qn.length) return result('owned', 'Owned', audio);
       const same = audio.filter((m) => !m.narrators.length || peopleOverlap(m.narrators, qn));
@@ -128,12 +147,12 @@
       return result('other-recording', 'Own other narrator', audio);
     }
     if (type === 'ebook' || type === 'book') {
-      if (books.length) return result('owned', 'Owned', books);
-      return result('other-format', 'Own audiobook', audio);
+      const ebooks = matches.filter(isEbookLike);
+      if (ebooks.length) return result('owned', 'Owned', ebooks);
+      return result('other-format', 'Own ' + ownedFormats(matches, 'ebook').join(' + '), matches);
     }
     // Unknown type (DOM fallback): report what is owned.
-    const formats = [audio.length && 'audiobook', books.length && 'book'].filter(Boolean).join(' + ');
-    return result('owned', 'Own ' + formats, matches);
+    return result('owned', 'Own ' + ownedFormats(matches).join(' + '), matches);
   }
 
   Object.assign(NS, { OwnedIndex, titlesMatch, evaluate, describe });

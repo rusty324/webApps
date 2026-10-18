@@ -29,9 +29,10 @@
           <li><b>Title</b> (required): <code>title</code>, <code>book title</code>, <code>name</code></li>
           <li><b>Author</b>: <code>author</code>, <code>authors</code>, <code>written by</code>, <code>additional authors</code></li>
           <li><b>Narrator</b>: <code>narrator</code>, <code>narrators</code>, <code>narrated by</code>, <code>read by</code></li>
-          <li><b>Format</b> (optional): <code>format</code>, <code>type</code>, <code>binding</code>. Anything containing “audio” is an audiobook.</li>
+          <li><b>Format(s)</b> (optional): <code>format</code>, <code>formats</code>, <code>type</code>, <code>binding</code>. A list (<code>["ebook","audio"]</code> or <code>ebook; audio</code>) means you own several formats. Recognized: audio / ebook (kindle, epub…) / physical (print, paperback, hardcover…).</li>
+          <li><b>Status</b> (optional, shown in the tooltip): <code>status</code>, <code>shelf</code></li>
         </ul>
-        <p>Without a format column, rows with a narrator are audiobooks and the rest are books. Separate multiple people with <code>;</code>, <code>&amp;</code> or <code>and</code>.</p>
+        <p>Without a format column, rows with a narrator are audiobooks and the rest are books of unspecified format (treated like ebooks). Separate multiple people with <code>;</code>, <code>&amp;</code>, <code>and</code> or commas.</p>
 <pre>title,author,narrator,format
 Project Hail Mary,Andy Weir,Ray Porter,
 The Name of the Wind,Patrick Rothfuss,,ebook</pre>
