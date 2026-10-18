@@ -81,3 +81,13 @@ test('role suffixes are stripped from names', () => {
   assert.deepEqual(NS.splitNames('Andrzej Sapkowski, Danusia Stok - translator'), ['Andrzej Sapkowski', 'Danusia Stok']);
   assert.deepEqual(NS.splitNames('Jane Doe (Illustrator)'), ['Jane Doe']);
 });
+
+test('JSON records with mixed key names and narrator lists', () => {
+  const json = JSON.stringify({ items: [
+    { title: 'A', author: 'X Y', narrator: 'Jim Dale', formats: ['physical', 'audio'] },
+    { title: 'B', author: 'X Y', narrators: ['Martin Jarvis', 'Full Cast'], formats: ['audio'] },
+  ] });
+  const { entries } = NS.parseLibrary(json, 'x.json');
+  assert.deepEqual(entries[0].narrators, ['Jim Dale']);
+  assert.deepEqual(entries[1].narrators, ['Martin Jarvis', 'Full Cast']);
+});

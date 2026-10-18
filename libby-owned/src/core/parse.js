@@ -104,7 +104,13 @@
   }
 
   function toEntry(rec, cols) {
-    const get = (f) => (cols[f] ? rec[cols[f]] : undefined);
+    // JSON records may not all use the same key ("narrator" vs "narrators").
+    const get = (f) => {
+      if (cols[f] && rec[cols[f]] != null) return rec[cols[f]];
+      if (!cols[f]) return undefined;
+      const key = Object.keys(rec).find((k) => FIELD_ALIASES[f].includes(headerKey(k)) && rec[k] != null);
+      return key ? rec[key] : undefined;
+    };
     let title = get('title');
     if (title && typeof title === 'object' && !Array.isArray(title)) title = title.name || title.title;
     title = String(title == null ? '' : title).trim();
