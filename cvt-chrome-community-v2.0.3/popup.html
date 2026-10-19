@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Civitai Bulk Tools</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    html, body { margin: 0; padding: 0; }
+    body { width: 400px; }
+    /* Form field group */
+    .cvt-field { margin-bottom: var(--cvt-space-md); }
+    .cvt-field:last-child { margin-bottom: 0; }
+    .cvt-field-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: var(--cvt-space-sm);
+    }
+    .cvt-field-hint {
+      font-size: var(--cvt-text-xs); color: var(--cvt-text-muted);
+      margin-top: var(--cvt-space-xs);
+    }
+    /* Radio group */
+    .cvt-radio-group { display: flex; gap: var(--cvt-space-sm); flex-wrap: wrap; }
+    .cvt-radio-option {
+      display: flex; align-items: center; gap: var(--cvt-space-xs);
+      font-size: var(--cvt-text-sm); color: var(--cvt-text-secondary); cursor: pointer;
+    }
+    .cvt-radio-option input[type="radio"] { accent-color: var(--cvt-primary); }
+    /* Password toggle */
+    .cvt-input-wrapper {
+      position: relative; display: flex; align-items: center;
+    }
+    .cvt-input-wrapper .cvt-input { padding-right: 36px; }
+    .cvt-input-toggle-vis {
+      position: absolute; right: 8px; background: none; border: none;
+      cursor: pointer; font-size: 14px; color: var(--cvt-text-muted); padding: 2px;
+    }
+    /* Stat cards */
+    .cvt-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--cvt-space-sm); }
+    .cvt-stat {
+      background: var(--cvt-bg-muted); border-radius: var(--cvt-radius-md);
+      padding: var(--cvt-space-md); text-align: center;
+    }
+    .cvt-stat-value {
+      font-size: var(--cvt-text-xl); font-weight: var(--cvt-weight-bold);
+      color: var(--cvt-primary);
+    }
+    .cvt-stat-label {
+      font-size: var(--cvt-text-xs); color: var(--cvt-text-muted);
+      margin-top: var(--cvt-space-xs);
+    }
+    /* Quick links */
+    .cvt-quick-links { display: flex; flex-wrap: wrap; gap: var(--cvt-space-xs); }
+    /* Toast notification */
+    .cvt-toast {
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      padding: var(--cvt-space-sm) var(--cvt-space-lg);
+      border-radius: var(--cvt-radius-md); font-size: var(--cvt-text-sm);
+      color: #fff; z-index: 9999; pointer-events: none;
+      animation: cvt-fade-in var(--cvt-duration-fast) var(--cvt-ease-out);
+    }
+    .cvt-toast-success { background: var(--cvt-success); }
+    .cvt-toast-error { background: var(--cvt-danger); }
+    /* User & collection list items */
+    .cvt-list-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--cvt-space-sm) var(--cvt-space-md);
+      border: 1px solid var(--cvt-border); border-radius: var(--cvt-radius-md);
+      font-size: var(--cvt-text-sm);
+    }
+    .cvt-list-item + .cvt-list-item { margin-top: var(--cvt-space-xs); }
+    .cvt-list-item-info { display: flex; align-items: center; gap: var(--cvt-space-sm); flex: 1; min-width: 0; }
+    .cvt-list-item-actions { display: flex; gap: var(--cvt-space-xs); flex-shrink: 0; }
+    .cvt-empty-state {
+      text-align: center; padding: var(--cvt-space-xl);
+      color: var(--cvt-text-muted); font-size: var(--cvt-text-sm);
+    }
+    /* Settings section dividers */
+    .cvt-settings-section { margin-bottom: var(--cvt-space-lg); }
+    .cvt-settings-section-title {
+      font-size: var(--cvt-text-xs); font-weight: var(--cvt-weight-semibold);
+      color: var(--cvt-text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: var(--cvt-space-sm); padding-bottom: var(--cvt-space-xs);
+      border-bottom: 1px solid var(--cvt-border);
+    }
+    /* Pro badge */
+    .cvt-pro-only { display: none; }
+    body.cvt-variant-pro .cvt-pro-only { display: block; }
+    /* Button row */
+    .cvt-btn-row { display: flex; gap: var(--cvt-space-sm); flex-wrap: wrap; }
+    /* Collection items expandable area */
+    .cvt-collection-items {
+      padding: var(--cvt-space-sm) var(--cvt-space-md);
+      border-top: 1px solid var(--cvt-border);
+      font-size: var(--cvt-text-xs); color: var(--cvt-text-secondary);
+      display: none;
+    }
+    .cvt-collection-items.cvt-expanded { display: block; }
+    .cvt-collection-item {
+      padding: var(--cvt-space-xs) 0;
+      border-bottom: 1px solid var(--cvt-border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .cvt-collection-item:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <div class="cvt-popup" id="popup-root">
+    <!-- Header -->
+    <div class="cvt-popup-header">
+      <div class="cvt-popup-logo">🎨 Civitai Bulk Tools</div>
+      <span class="cvt-badge cvt-badge-primary" id="version-badge">v2.0.0</span>
+    </div>
+
+    <!-- Tab Bar -->
+    <div class="cvt-tabs" id="tab-bar">
+      <button class="cvt-tab cvt-tab-active" data-tab="dashboard">📊 Dashboard</button>
+      <button class="cvt-tab" data-tab="collections">📋 Collections</button>
+      <button class="cvt-tab" data-tab="settings">⚙️ Settings</button>
+      <button class="cvt-tab" data-tab="about">ℹ️ About</button>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="cvt-popup-body">
+      <!-- Dashboard Tab -->
+      <div class="cvt-tab-panel cvt-tab-panel-active" id="panel-dashboard"></div>
+      <!-- Collections Tab -->
+      <div class="cvt-tab-panel" id="panel-collections"></div>
+      <!-- Settings Tab -->
+      <div class="cvt-tab-panel" id="panel-settings"></div>
+      <!-- About Tab -->
+      <div class="cvt-tab-panel" id="panel-about"></div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
