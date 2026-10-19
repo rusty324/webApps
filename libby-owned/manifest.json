@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Libby Owned",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Marks books and audiobooks on Libby that are already in your own library (imported from CSV or JSON).",
   "permissions": ["storage"],
   "background": { "service_worker": "src/background/service-worker.js" },

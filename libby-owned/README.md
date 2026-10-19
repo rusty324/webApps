@@ -15,7 +15,9 @@ Hover a badge to see which of your entries matched, with their formats and statu
 1. Open `chrome://extensions` and turn on **Developer mode**.
 2. Click **Load unpacked** and choose this `libby-owned` folder.
 3. The import page opens automatically. You can reopen it later from the toolbar button.
-4. Import your list, then reload any open Libby tabs.
+4. Import your list, then reload any open Libby tabs. Chrome doesn't add the extension to tabs that were already open, and this applies after every extension update as well.
+
+The toolbar icon shows how many badges are on the current Libby page.
 
 ## Your list
 
@@ -48,7 +50,7 @@ The list is stored only in this browser, in `chrome.storage.local`.
 
 ## Limitations
 
-- This was built without access to the live Libby site, so the API capture and badge placement are untested against real Libby pages. If badges are missing or misplaced, turn on **Debug logging** on the import page and check the Libby tab's console (filter "Libby Owned"). It reports how many titles were captured and badged.
+- Libby isn't a documented API. If badges disappear or land in odd places, open the import page and check **Troubleshooting → Diagnostics from the last Libby visit**. It explains in plain language where things stopped (never ran on the page, no library, no book data found, no matches). **Copy diagnostics** gives you a report to share; review it first, because it includes titles visible on the page. **Debug logging** adds detailed output to the Libby tab's console (filter "Libby Owned").
 - Libby updates can change both the API and the page structure.
 - Desktop Chrome only. The Libby mobile apps can't run extensions.
 

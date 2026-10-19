@@ -84,3 +84,5 @@ th { color: var(--muted); font-weight: 600; }
 .check input { margin-top: 4px; }
 pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 13px; }
 code { font-size: 13px; }
+h3 { margin: 18px 0 6px; font-size: 15px; }
+#diag { max-height: 360px; overflow: auto; }

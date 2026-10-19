@@ -71,6 +71,14 @@ The Name of the Wind,Patrick Rothfuss,,ebook</pre>
     <section>
       <h2>Troubleshooting</h2>
       <label class="check"><input id="debug" type="checkbox"> Debug logging: write what the extension captures and badges to the Libby tab’s console (DevTools → Console, filter “Libby Owned”).</label>
+      <h3>Diagnostics from the last Libby visit</h3>
+      <ul id="diagSummary" class="warnings"></ul>
+      <p><button id="copyDiag" type="button" class="secondary">Copy diagnostics</button> <span id="copied" class="hint"></span></p>
+      <details>
+        <summary>Show raw diagnostics</summary>
+        <p class="hint">Contains page addresses, request hosts and some text from the Libby page (book titles, menu labels). Review it before sharing.</p>
+        <pre id="diag">(none yet)</pre>
+      </details>
     </section>
   </main>
   <script src="../core/text.js"></script>

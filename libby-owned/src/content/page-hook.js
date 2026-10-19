@@ -83,18 +83,38 @@
   // starts listening after Libby's first requests.
   const seenById = new Map();
 
+  // Short, privacy-safe description of a request for diagnostics: host plus
+  // the first two path segments with long numbers (card/loan ids) masked.
+  function describeUrl(url) {
+    try {
+      const u = new URL(url, location.href);
+      const path = u.pathname.split('/').slice(0, 3).join('/').replace(/\d{3,}/g, '#');
+      return u.hostname + path;
+    } catch (e) {
+      return String(url).slice(0, 60);
+    }
+  }
+
+  function report(url, info) {
+    window.postMessage({ __libbyOwned: 'request', url: describeUrl(url), ...info }, location.origin);
+  }
+
   function handle(json, url) {
     const items = extract(json);
+    const keys = json && typeof json === 'object' && !Array.isArray(json) ? Object.keys(json).slice(0, 12) : ['[array]'];
+    report(url, { json: true, items: items.length, keys });
     if (!items.length) return;
     for (const it of items) seenById.set(it.id, it);
     window.postMessage({ __libbyOwned: 'media', items, url: String(url) }, location.origin);
   }
 
   window.addEventListener('message', (e) => {
-    if (e.source === window && e.data && e.data.__libbyOwned === 'replay' && seenById.size) {
-      window.postMessage({ __libbyOwned: 'media', items: [...seenById.values()], url: 'replay' }, location.origin);
+    if (e.source === window && e.data && e.data.__libbyOwned === 'replay') {
+      window.postMessage({ __libbyOwned: 'hook-alive' }, location.origin);
+      if (seenById.size) window.postMessage({ __libbyOwned: 'media', items: [...seenById.values()], url: 'replay' }, location.origin);
     }
   });
+  window.postMessage({ __libbyOwned: 'hook-alive' }, location.origin);
 
   function isInteresting(url) {
     try {
@@ -104,6 +124,18 @@
     }
   }
 
+  function handleText(text, url) {
+    if (text && /^\s*[[{]/.test(text)) {
+      try {
+        handle(JSON.parse(text), url);
+        return;
+      } catch (e) {
+        /* not JSON */
+      }
+    }
+    report(url, { json: false });
+  }
+
   const origFetch = window.fetch;
   if (typeof origFetch === 'function') {
     window.fetch = function (input) {
@@ -111,10 +143,8 @@
       p.then((res) => {
         try {
           const url = res.url || (input && input.url) || String(input);
-          const ct = res.headers.get('content-type') || '';
-          if (isInteresting(url) && /json/i.test(ct)) {
-            res.clone().json().then((j) => handle(j, url), () => {});
-          }
+          if (!isInteresting(url)) return report(url, { skipped: true });
+          res.clone().text().then((t) => handleText(t, url), () => {});
         } catch (e) {
           /* never break the page */
         }
@@ -132,16 +162,14 @@
       return origOpen.apply(this, arguments);
     };
     XHR.send = function () {
-      if (isInteresting(this.__libbyOwnedUrl)) {
+      const url = this.__libbyOwnedUrl;
+      if (!isInteresting(url)) report(url, { skipped: true, xhr: true });
+      else {
         this.addEventListener('load', () => {
           try {
-            let j = null;
-            if (this.responseType === 'json') j = this.response;
-            else if (this.responseType === '' || this.responseType === 'text') {
-              const t = this.responseText;
-              if (t && /^\s*[[{]/.test(t)) j = JSON.parse(t);
-            }
-            if (j) handle(j, this.responseURL || this.__libbyOwnedUrl);
+            if (this.responseType === 'json') handle(this.response, this.responseURL || url);
+            else if (this.responseType === '' || this.responseType === 'text') handleText(this.responseText, this.responseURL || url);
+            else report(url, { json: false, responseType: this.responseType });
           } catch (e) {
             /* ignore */
           }

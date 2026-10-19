@@ -17,6 +17,45 @@
   const mediaByKey = new Map(); // normalized title -> Set of ids
 
   const log = (...a) => debug && console.log('[Libby Owned]', ...a);
+  const VERSION = chrome.runtime.getManifest().version;
+  console.info(`[Libby Owned] v${VERSION} content script running on ${location.href}`);
+
+  // ---- diagnostics (shown on the options page, copied into bug reports) ----
+
+  const diag = {
+    version: VERSION,
+    url: location.href,
+    startedAt: new Date().toISOString(),
+    hookAlive: false,
+    libraryTitles: 0,
+    captured: 0,
+    scans: 0,
+    lastScan: null,
+    requests: {}, // "host/path" -> { n, json, items, keys }
+    capturedSample: [],
+    pageTextSample: [],
+    errors: [],
+  };
+  let diagTimer = null;
+  function saveDiag() {
+    if (diagTimer) return;
+    diagTimer = setTimeout(() => {
+      diagTimer = null;
+      diag.url = location.href;
+      diag.savedAt = new Date().toISOString();
+      try {
+        chrome.storage.local.set({ diag });
+      } catch (e) {
+        /* extension reloaded; this tab's script is orphaned */
+      }
+    }, 1500);
+  }
+  function recordError(where, e) {
+    console.error('[Libby Owned] ' + where, e);
+    diag.errors.push(where + ': ' + (e && e.message ? e.message : String(e)));
+    diag.errors = diag.errors.slice(-10);
+    saveDiag();
+  }
 
   // ---- owned library -------------------------------------------------------
 
@@ -25,7 +64,10 @@
       const entries = (data.library && data.library.entries) || [];
       debug = !!(data.settings && data.settings.debug);
       index = new NS.OwnedIndex(entries);
-      log(`loaded ${index.size} owned titles`);
+      diag.libraryTitles = index.size;
+      console.info(`[Libby Owned] library: ${index.size} titles; debug logging ${debug ? 'on' : 'off'}`);
+      if (!index.size) console.warn('[Libby Owned] no library imported; open the extension options to import one');
+      saveDiag();
       clearBadges();
       scheduleScan();
     });
@@ -48,11 +90,33 @@
   }
 
   window.addEventListener('message', (e) => {
-    if (e.source !== window || !e.data || e.data.__libbyOwned !== 'media' || !Array.isArray(e.data.items)) return;
-    for (const item of e.data.items) {
+    if (e.source !== window || !e.data || typeof e.data.__libbyOwned !== 'string') return;
+    const d = e.data;
+    if (d.__libbyOwned === 'hook-alive') {
+      diag.hookAlive = true;
+      return saveDiag();
+    }
+    if (d.__libbyOwned === 'request') {
+      const r = (diag.requests[d.url] = diag.requests[d.url] || { n: 0 });
+      r.n++;
+      if (d.skipped) r.skipped = true;
+      if (d.json != null) r.json = d.json;
+      if (d.items != null) r.items = (r.items || 0) + d.items;
+      if (d.keys) r.keys = d.keys;
+      const urls = Object.keys(diag.requests);
+      if (urls.length > 60) delete diag.requests[urls[0]];
+      return saveDiag();
+    }
+    if (d.__libbyOwned !== 'media' || !Array.isArray(d.items)) return;
+    for (const item of d.items) {
       if (item && typeof item.id === 'string' && typeof item.title === 'string') addMedia(item);
     }
-    log(`captured ${e.data.items.length} title(s) from ${e.data.url} (total ${media.size})`);
+    diag.captured = media.size;
+    for (const item of d.items.slice(0, 8 - diag.capturedSample.length)) {
+      diag.capturedSample.push({ id: item.id, title: item.title, type: item.type, authors: item.authors, narrators: item.narrators });
+    }
+    log(`captured ${d.items.length} title(s) from ${d.url} (total ${media.size})`);
+    saveDiag();
     scheduleScan();
   });
   window.postMessage({ __libbyOwned: 'replay' }, location.origin);
@@ -159,6 +223,14 @@
   }
 
   function scan() {
+    try {
+      scanInner();
+    } catch (e) {
+      recordError('scan', e);
+    }
+  }
+
+  function scanInner() {
     if (!document.body) return;
     if (!index.size) return;
     const hosts = new Map(); // host element -> candidate texts
@@ -177,6 +249,11 @@
       if (!hosts.has(host)) hosts.set(host, new Set());
       hosts.get(host).add(n.nodeValue.trim());
     }
+    if (diag.pageTextSample.length < 40) {
+      for (const texts of hosts.values()) {
+        for (const t of texts) if (t.length >= 3 && t.length <= 80 && diag.pageTextSample.length < 40) diag.pageTextSample.push(t);
+      }
+    }
     let badged = 0;
     for (const [host, texts] of hosts) {
       const whole = (host.textContent || '').trim();
@@ -186,6 +263,14 @@
       if (applyBadge(host, found)) badged++;
     }
     log(`scan: ${hosts.size} text elements, ${badged} badge(s), ${media.size} captured titles`);
+    diag.scans++;
+    diag.lastScan = { textElements: hosts.size, badges: badged, at: new Date().toISOString() };
+    saveDiag();
+    try {
+      chrome.runtime.sendMessage({ type: 'badges', count: badged }, () => void chrome.runtime.lastError);
+    } catch (e) {
+      /* orphaned after extension reload */
+    }
   }
 
   function clearBadges() {
@@ -212,8 +297,12 @@
   });
 
   function start() {
-    observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
-    loadLibrary();
+    try {
+      observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      loadLibrary();
+    } catch (e) {
+      recordError('start', e);
+    }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
   else start();

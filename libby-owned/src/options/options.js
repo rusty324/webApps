@@ -136,9 +136,61 @@
     });
   });
 
-  chrome.storage.local.get(['library', 'settings'], (d) => {
+  // Plain-language reading of the diagnostics the content script saves.
+  function diagnose(diag) {
+    const out = [];
+    const ok = (text) => out.push({ text, ok: true });
+    const bad = (text) => out.push({ text });
+    if (!diag) {
+      bad('The extension has never run on a Libby page. Check that it is enabled and up to date (reload it on chrome://extensions after updating), that its Site access allows libbyapp.com, and then reload the Libby tab.');
+      return out;
+    }
+    const v = chrome.runtime.getManifest().version;
+    ok(`Last ran v${diag.version} on ${diag.url} at ${new Date(diag.savedAt || diag.startedAt).toLocaleString()}.`);
+    if (diag.version !== v) bad(`That was an older version (now v${v}). Reload the Libby tab.`);
+    if (!diag.libraryTitles) bad('The Libby tab saw no imported library. Import one above, then reload the Libby tab.');
+    if (diag.errors && diag.errors.length) bad('Errors: ' + diag.errors.join(' | '));
+    if (!diag.hookAlive) bad('The network hook did not start, so book data cannot be read from Libby (needs Chrome 111 or newer).');
+    const reqs = Object.entries(diag.requests || {});
+    const parsed = reqs.filter(([, r]) => r.json);
+    if (diag.hookAlive && !reqs.length) bad('No network requests were seen. Libby may be loading data in a way the hook does not cover.');
+    else if (reqs.length && !parsed.length) bad(`Saw ${reqs.length} request(s), but none returned JSON from overdrive.com or libbyapp.com.`);
+    else if (parsed.length && !diag.captured) bad(`Read ${parsed.length} JSON response(s), but found no book records in them. Libby's data format probably differs from what the extension expects.`);
+    else if (diag.captured) ok(`Captured ${diag.captured} book record(s) from Libby.`);
+    if (diag.lastScan) {
+      const b = diag.lastScan.badges;
+      (b ? ok : bad)(`Last scan: ${diag.lastScan.textElements} text elements on the page, ${b} badge(s).`);
+    } else if (diag.libraryTitles) bad('The page has not been scanned yet.');
+    return out;
+  }
+
+  function renderDiag(diag) {
+    const ul = $('diagSummary');
+    ul.textContent = '';
+    for (const { text, ok } of diagnose(diag)) {
+      const li = document.createElement('li');
+      li.textContent = text;
+      if (ok) li.className = 'ok';
+      ul.appendChild(li);
+    }
+    $('diag').textContent = diag ? JSON.stringify(diag, null, 2) : '(none yet)';
+  }
+
+  $('copyDiag').addEventListener('click', async () => {
+    const summary = [...$('diagSummary').children].map((li) => '- ' + li.textContent).join('\n');
+    await navigator.clipboard.writeText(summary + '\n\n' + $('diag').textContent);
+    $('copied').textContent = 'Copied.';
+    setTimeout(() => ($('copied').textContent = ''), 2000);
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.diag) renderDiag(changes.diag.newValue);
+  });
+
+  chrome.storage.local.get(['library', 'settings', 'diag'], (d) => {
     library = d.library || null;
     $('debug').checked = !!(d.settings && d.settings.debug);
     render();
+    renderDiag(d.diag);
   });
 })();
